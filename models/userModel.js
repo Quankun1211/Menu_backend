@@ -18,6 +18,9 @@ const userSchema = new mongoose.Schema({
         type: String,
         require: true
     },
+    phone: {
+      type: String,
+    },
     role: {
         type: String,
         default: "user"
@@ -59,6 +62,10 @@ const userSchema = new mongoose.Schema({
   },
   otpExpires: { 
     type: Date 
+  },
+  isActive: {
+    type: Boolean,
+    default: true
   }
 }, {timestamps: true})
 

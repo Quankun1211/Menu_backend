@@ -207,9 +207,6 @@ export const updateOrderStatus = async (req, res) => {
   try {
     const { orderId, nextStatus } = req.body;
     const shipperId = req.user._id;
-    console.log(nextStatus);
-    console.log(orderId);
-    
 
     const order = await Order.findOne({ _id: orderId, shipperId }).session(session);
 
@@ -255,6 +252,12 @@ export const updateOrderStatus = async (req, res) => {
     order.status = nextStatus;
     await order.save({ session });
     await session.commitTransaction();
+
+    const io = req.app.get('io');
+    if (io) {
+      io.emit("admin_refresh_orders", { orderId: order._id });
+      io.to(shipperId.toString()).emit("shipper_order_updated", { orderId: order._id, status: nextStatus });
+    }
 
     res.status(200).json({
       success: true,
@@ -311,7 +314,7 @@ export const requestCancelOrder = async (req, res) => {
         };
 
         await order.save();
-
+        req.app.get('io').emit("admin_refresh_orders", { orderId: order._id });
         res.status(200).json({
             success: true,
             message: "Yêu cầu hủy đơn đã được gửi. Vui lòng chờ Admin phê duyệt.",
@@ -393,3 +396,4 @@ export const updateShipperLocation = async (req, res) => {
 
   res.status(200).json({ success: true });
 };
+

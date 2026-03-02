@@ -35,7 +35,17 @@ export const protectRoute = async (req, res, next) => {
     });
   }
 };
-
+export const authorizeRole = (allowedRoles) => {
+  return (req, res, next) => {
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({ 
+        success: false, 
+        message: "Bạn không có quyền thực hiện hành động này" 
+      });
+    }
+    next();
+  };
+};
 export const optionalProtectRoute = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;

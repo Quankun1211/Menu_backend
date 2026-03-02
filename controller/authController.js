@@ -207,15 +207,14 @@ export const login = async (req, res) => {
         })
 
         if(!user) {
-            return res.status(400).json({error: "Username or email is not exits!"})
+            return res.status(200).json({error: "Username or email is not exits!"})
         }
 
         const isPasswordCorrect = await bcryptjs.compare(password, user.password || "")
         if(!isPasswordCorrect) {
             return res.status(400).json({error: "Invalid password"})
         }
-
-        const token = generateTokenAndSetCookie(user._id, res)
+        const token = generateTokenAndSetCookie(user, res)
         console.log("Login ok");
         
         res.status(200).json({
@@ -248,3 +247,42 @@ export const logout = async (req, res) => {
         res.status(500).json({ error: "Internal server" });
     }
 }
+
+export const createSuperAdmin = async (req, res) => {
+  try {
+    const { name, username, email, password } = req.body;
+
+    const existingAdmin = await User.findOne({ role: "admin" });
+
+    if (existingAdmin) {
+      return res.status(400).json({
+        success: false,
+        message: "Super admin đã tồn tại"
+      });
+    }
+
+    const hashedPassword = await bcryptjs.hash(password, 10);
+
+    const superAdmin = new User({
+      name,
+      username,
+      email,
+      password: hashedPassword,
+      role: "super_admin",
+      isVerified: true
+    });
+
+    await superAdmin.save();
+
+    res.status(201).json({
+      success: true,
+      message: "Tạo tài khoản Super Admin thành công"
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};

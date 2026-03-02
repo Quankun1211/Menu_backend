@@ -40,8 +40,8 @@ const __dirname = path.resolve()
 
 app.use(cors({
     origin: true, 
-    // origin: 'http://localhost:5173', 
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], 
+    origin: 'http://localhost:5173', 
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'], 
     credentials: true,
     allowedHeaders: ['Content-Type', 'Authorization'] 
 }))
@@ -51,21 +51,30 @@ const io = new Server(server, {
     origin: "*"
   }
 });
-
 io.on("connection", (socket) => {
   socket.on("join_order", (orderId) => {
     socket.join(orderId);
-    console.log(`Socket ${socket.id} joined room: ${orderId}`);
-    console.log("Rooms current state:", io.sockets.adapter.rooms);
+  });
+
+  socket.on("join_shipper_room", (shipperId) => {
+    socket.join(shipperId);
+  });
+
+  socket.on("order_status_changed_by_shipper", (data) => {
+    io.emit("admin_refresh_orders", { orderId: data.orderId });
+  });
+
+  socket.on("shipper_request_cancel", (data) => {
+    io.emit("admin_refresh_orders", { orderId: data.orderId });
   });
 });
 
-const sendLocationToUser = (orderId, lat, lng) => {
-  io.to(orderId).emit('live_update', {
-    latitude: lat,
-    longitude: lng
-  });
-};
+// const sendLocationToUser = (orderId, lat, lng) => {
+//   io.to(orderId).emit('live_update', {
+//     latitude: lat,
+//     longitude: lng
+//   });
+// };
 
 app.use(express.json())
 app.use(cookieParser())

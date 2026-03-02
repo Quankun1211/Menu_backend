@@ -44,6 +44,7 @@ export const getMe = async (req, res) => {
                 name: user.name,
                 username: user.username,
                 email: user.email,
+                role: user.role,
                 createdAt: user.createdAt,
                 avatar: user.avatar || null,
                 isOnline: user.isOnline
