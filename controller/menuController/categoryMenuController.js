@@ -36,7 +36,7 @@ export const createCategoryMenu = async (req, res) => {
 
 export const getCategoryMenu = async (req, res) => {
   try {
-    const categories = await CategoryMenu.find()
+    const categories = await CategoryMenu.find({isDeleted: false})
     return res.status(200).json({
       code: 200,
       data: categories,
@@ -79,7 +79,7 @@ export const createCategoryRecipe = async (req, res) => {
 };
 export const getCategoryRecipe = async (req, res) => {
   try {
-    const categories = await CategoryRecipe.find()
+    const categories = await CategoryRecipe.find({isDeleted: false})
     return res.status(200).json({
       code: 200,
       data: categories,

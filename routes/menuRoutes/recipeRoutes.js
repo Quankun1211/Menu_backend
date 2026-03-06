@@ -16,7 +16,6 @@ router.get("/get-by-category", protectRoute, getRecipesByCategory)
 router.get("/get-lastest", getLatestRecipeDetail)
 
 // My recipe routes
-
 router.post("/create-my-recipes", protectRoute, upload.single("image"), createUserRecipe)
 router.get("/get-my-recipes", protectRoute, getRecipes)
 router.get("/get-my-recipe-detail/:recipeId", protectRoute, getMyRecipeDetail)

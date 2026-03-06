@@ -128,7 +128,7 @@ export const getRecipesByCategory = async (req, res) => {
     const { categoryId } = req.query;
     const userId = req.user?.id; 
     
-    let filter = {};
+    let filter = {isDeleted: false};
     if (categoryId && categoryId !== 'all') {
       filter.category = categoryId;
     }
@@ -200,7 +200,6 @@ export const createRecipePostman = async (req, res) => {
       instructionUrl, 
       cookTime 
     } = req.body;
-    console.log("Try");
 
     try {
       if (typeof ingredients === 'string') {
@@ -285,7 +284,9 @@ export const createRecipePostman = async (req, res) => {
 
 export const getLatestRecipeDetail = async (req, res) => {
   try {
-    const recipe = await Recipe.findOne()
+    let filter = {isDeleted: false};
+
+    const recipe = await Recipe.findOne(filter)
       .populate("ingredients")
       .sort({ createdAt: -1 })
       .lean();

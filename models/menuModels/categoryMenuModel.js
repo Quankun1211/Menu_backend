@@ -17,7 +17,8 @@ const categoryMenuSchema = new mongoose.Schema({
     description: {
         type: String,
         required: true
-    }
+    },
+    isDeleted: { type: Boolean, default: false },
 })
 
 export const CategoryMenu = mongoose.model("CategoryMenu", categoryMenuSchema)

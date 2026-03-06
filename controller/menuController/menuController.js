@@ -88,137 +88,138 @@ export const createMenu = async (req, res) => {
 };
 
 export const getMenus = async (req, res) => {
-  try {
-    const { categoryId } = req.query;
-    let filter = {};
+    try {
+        const { categoryId } = req.query;
+        let filter = { isDeleted: false }; 
 
-    if (categoryId && categoryId !== 'all' && categoryId !== 'undefined') {
-      if (!mongoose.Types.ObjectId.isValid(categoryId)) {
-        return res.status(400).json({ message: "Định dạng Category ID không hợp lệ" });
-      }
-      filter.category = new mongoose.Types.ObjectId(categoryId);
-    }
-
-    const menus = await Menu.find(filter)
-      .populate({
-        path: 'recipes',
-        populate: {
-          path: 'ingredients.ingredientId'
+        if (categoryId && categoryId !== 'all' && categoryId !== 'undefined') {
+            if (!mongoose.Types.ObjectId.isValid(categoryId)) {
+                return res.status(400).json({ message: "Định dạng Category ID không hợp lệ" });
+            }
+            filter.category = new mongoose.Types.ObjectId(categoryId);
         }
-      })
-      .populate('category')
-      .sort({ createdAt: -1 })
-      .lean();
 
-    const updatedMenus = menus.map(menu => {
-      let totalPriceAll = 0;
-      let totalPriceInDB = 0;
-
-      if (menu.recipes && menu.recipes.length > 0) {
-        menu.recipes.forEach(recipe => {
-          if (recipe.ingredients && recipe.ingredients.length > 0) {
-            recipe.ingredients.forEach(recipeIng => {
-              const details = recipeIng.ingredientId; 
-              
-              if (details && details.price) {
-                const useQuantity = recipeIng.quantity || 0;
-                const lineTotal = details.price * useQuantity;
-
-                totalPriceAll += lineTotal;
-
-                if (recipeIng.itemType === 'Product' || details.productId) {
-                  totalPriceInDB += lineTotal;
+        const menus = await Menu.find(filter)
+            .populate({
+                path: 'recipes',
+                match: { isDeleted: false }, 
+                populate: {
+                    path: 'ingredients.ingredientId'
                 }
-              }
-            });
-          }
+            })
+            .populate('category')
+            .sort({ createdAt: -1 })
+            .lean();
+
+        const updatedMenus = menus.map(menu => {
+            let totalPriceAll = 0;
+            let totalPriceInDB = 0;
+
+            if (menu.recipes && menu.recipes.length > 0) {
+                menu.recipes.forEach(recipe => {
+                    if (recipe && recipe.ingredients && recipe.ingredients.length > 0) {
+                        recipe.ingredients.forEach(recipeIng => {
+                            const details = recipeIng.ingredientId;
+                            if (details && details.price) {
+                                const useQuantity = recipeIng.quantity || 0;
+                                const lineTotal = details.price * useQuantity;
+                                totalPriceAll += lineTotal;
+
+                                if (recipeIng.itemType === 'Product' || details.productId) {
+                                    totalPriceInDB += lineTotal;
+                                }
+                            }
+                        });
+                    }
+                });
+            }
+
+            return {
+                ...menu,
+                totalPrice: Math.round(totalPriceAll),
+                totalPriceInDB: Math.round(totalPriceInDB)
+            };
         });
-      }
 
-      return {
-        ...menu,
-        totalPrice: Math.round(totalPriceAll),
-        totalPriceInDB: Math.round(totalPriceInDB)
-      };
-    });
-
-    return res.status(200).json({
-      code: 200,
-      count: updatedMenus.length,
-      data: updatedMenus,
-    });
-  } catch (error) {
-    console.error("Get menus error:", error.message);
-    return res.status(500).json({ error: "Lỗi máy chủ nội bộ" });
-  }
+        return res.status(200).json({
+            code: 200,
+            count: updatedMenus.length,
+            data: updatedMenus,
+        });
+    } catch (error) {
+        console.error("Get menus error:", error.message);
+        return res.status(500).json({ error: "Lỗi máy chủ nội bộ" });
+    }
 };
 
 export const getMenuDetail = async (req, res) => {
-  try {
-    const { id } = req.params;
+    try {
+        const { id } = req.params;
 
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid Menu ID format" });
-    }
-
-    const menu = await Menu.findById(id)
-      .populate({
-        path: 'recipes',
-        populate: {
-          path: 'ingredients.ingredientId' 
+        if (!mongoose.Types.ObjectId.isValid(id)) {
+            return res.status(400).json({ message: "Invalid Menu ID format" });
         }
-      })
-      .populate('category')
-      .lean();
 
-    if (!menu) {
-      return res.status(404).json({ message: "Menu not found" });
-    }
+        const menu = await Menu.findOne({ _id: id, isDeleted: false })
+            .populate({
+                path: 'recipes',
+                match: { isDeleted: false },
+                populate: {
+                    path: 'ingredients.ingredientId'
+                }
+            })
+            .populate('category')
+            .lean();
 
-    let totalPriceAll = 0;
-    let totalPriceInDB = 0;
+        if (!menu) {
+            return res.status(404).json({ message: "Menu not found or has been deleted" });
+        }
 
-    menu.recipes.forEach(recipe => {
-      if (recipe.ingredients) {
-        recipe.ingredients.forEach(ing => {
-          const detail = ing.ingredientId;
-          
-          if (detail) {
-            const finalName = detail.customName || detail.name;
-            const finalPrice = detail.price || 0;
-            const finalImage = detail.image || '';
-            const finalUnit = detail.unit || '';
+        let totalPriceAll = 0;
+        let totalPriceInDB = 0;
 
-            ing.ingredientId = {
-              ...detail,
-              displayName: finalName, 
-              price: finalPrice,
-              image: finalImage,
-              unit: finalUnit
-            };
+        if (menu.recipes) {
+            menu.recipes.forEach(recipe => {
+                if (recipe && recipe.ingredients) {
+                    recipe.ingredients.forEach(ing => {
+                        const detail = ing.ingredientId;
+                        if (detail) {
+                            const finalName = detail.customName || detail.name;
+                            const finalPrice = detail.price || 0;
+                            const finalImage = detail.image || '';
+                            const finalUnit = detail.unit || '';
 
-            const lineTotal = finalPrice * (ing.quantity || 0);
-            totalPriceAll += lineTotal;
+                            ing.ingredientId = {
+                                ...detail,
+                                displayName: finalName,
+                                price: finalPrice,
+                                image: finalImage,
+                                unit: finalUnit
+                            };
 
-            if (ing.itemType === 'Product' || detail.productId) {
-              totalPriceInDB += lineTotal;
-            }
-          }
+                            const lineTotal = finalPrice * (ing.quantity || 0);
+                            totalPriceAll += lineTotal;
+
+                            if (ing.itemType === 'Product' || detail.productId) {
+                                totalPriceInDB += lineTotal;
+                            }
+                        }
+                    });
+                }
+            });
+        }
+
+        return res.status(200).json({
+            code: 200,
+            data: {
+                ...menu,
+                totalPrice: Math.round(totalPriceAll),
+                totalPriceInDB: Math.round(totalPriceInDB)
+            },
         });
-      }
-    });
 
-    return res.status(200).json({
-      code: 200,
-      data: {
-        ...menu,
-        totalPrice: totalPriceAll,
-        totalPriceInDB: totalPriceInDB
-      },
-    });
-
-  } catch (error) {
-    console.error("Get menu detail error:", error.message);
-    return res.status(500).json({ error: "Internal server error" });
-  }
+    } catch (error) {
+        console.error("Get menu detail error:", error.message);
+        return res.status(500).json({ error: "Internal server error" });
+    }
 };

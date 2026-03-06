@@ -1135,6 +1135,9 @@ export const searchProducts = async (req, res) => {
 
     const pipeline = [
       {
+        $match: {
+          isActive: true,
+        },
         $lookup: {
           from: "categories",
           localField: "categoryId",
@@ -1394,7 +1397,7 @@ export const previewCheckout = async (req, res) => {
 
 export const getNormalProducts = async (req, res) => {
     try {
-        const products = await Product.find({ isSpecialty: false })
+        const products = await Product.find({ isSpecialty: false, isActive: true })
             .populate('categoryId', 'name')
             .populate('salePercent')
             .sort({ createdAt: -1 });

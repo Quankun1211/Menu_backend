@@ -65,15 +65,11 @@ const RecipeSchema = new mongoose.Schema({
   },
   instructionUrl: String,
   cookTime: Number,
-  owner: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
-    default: null // Mặc định null nghĩa là của hệ thống/admin
-  },
   isSystem: {
     type: Boolean,
     default: true // Luôn mặc định là true khi tạo từ Admin
-  }
+  },
+  isDeleted: { type: Boolean, default: false }
 }, { timestamps: true });
 
 export const Recipe = mongoose.model("Recipe", RecipeSchema);

@@ -13,7 +13,8 @@ const categoryRecipeSchema = new mongoose.Schema({
     description: {
         type: String,
         required: true
-    }
+    },
+    isDeleted: { type: Boolean, default: false },
 })
 
 export const CategoryRecipe = mongoose.model("CategoryRecipe", categoryRecipeSchema)
