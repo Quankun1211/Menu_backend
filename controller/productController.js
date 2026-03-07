@@ -975,10 +975,7 @@ export const getProductDetail = async (req, res) => {
     const { id } = req.params;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({
-        code: 400,
-        message: "Invalid product id",
-      });
+      return res.status(400).json({ code: 400, message: "Invalid product id" });
     }
 
     const checkProduct = await Product.findById(id).select("isSpecialty");
@@ -986,10 +983,12 @@ export const getProductDetail = async (req, res) => {
       return res.status(404).json({ code: 404, message: "Product not found" });
     }
 
+    const productId = new mongoose.Types.ObjectId(id);
+
     const pipeline = [
       {
         $match: {
-          _id: new mongoose.Types.ObjectId(id),
+          _id: productId,
           isActive: true,
         },
       },
@@ -1002,10 +1001,7 @@ export const getProductDetail = async (req, res) => {
         },
       },
       {
-        $unwind: {
-          path: "$sale",
-          preserveNullAndEmptyArrays: true,
-        },
+        $unwind: { path: "$sale", preserveNullAndEmptyArrays: true },
       },
       {
         $addFields: {
@@ -1052,7 +1048,7 @@ export const getProductDetail = async (req, res) => {
             as: "categoryId",
           },
         },
-        { $unwind: "$categoryId" }
+        { $unwind: { path: "$categoryId", preserveNullAndEmptyArrays: true } }
       );
     }
 
@@ -1062,20 +1058,56 @@ export const getProductDetail = async (req, res) => {
           from: "ingredients",
           localField: "_id",
           foreignField: "productId",
-          as: "relatedIngredientDocs",
+          as: "mappedIngredients",
         },
       },
       {
         $lookup: {
           from: "recipes",
-          let: { ingIds: "$relatedIngredientDocs._id" },
+          let: { 
+            pId: "$_id", 
+            mappedIngIds: "$mappedIngredients._id" 
+          },
           pipeline: [
             {
               $match: {
                 $expr: {
-                  $gt: [{ $size: { $setIntersection: ["$ingredients", "$$ingIds"] } }, 0],
-                },
-              },
+                  $and: [
+                    { $eq: ["$isDeleted", false] },
+                    {
+                      $gt: [
+                        {
+                          $size: {
+                            $filter: {
+                              input: "$ingredients",
+                              as: "ing",
+                              cond: {
+                                $or: [
+                                  // Trường hợp 1: Recipe dùng trực tiếp Product ID
+                                  {
+                                    $and: [
+                                      { $eq: ["$$ing.itemType", "Product"] },
+                                      { $eq: ["$$ing.ingredientId", "$$pId"] }
+                                    ]
+                                  },
+                                  // Trường hợp 2: Recipe dùng Ingredient ID mà Ingredient đó trỏ về Product này
+                                  {
+                                    $and: [
+                                      { $eq: ["$$ing.itemType", "Ingredient"] },
+                                      { $in: ["$$ing.ingredientId", "$$mappedIngIds"] }
+                                    ]
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        },
+                        0
+                      ]
+                    }
+                  ]
+                }
+              }
             },
             {
               $lookup: {
@@ -1094,7 +1126,7 @@ export const getProductDetail = async (req, res) => {
       {
         $project: {
           sale: 0,
-          relatedIngredientDocs: 0,
+          mappedIngredients: 0,
         },
       }
     );
@@ -1103,28 +1135,26 @@ export const getProductDetail = async (req, res) => {
 
     return res.status(200).json({
       code: 200,
-      data: products[0],
+      data: products[0] || null,
     });
   } catch (error) {
     console.error("getProductDetail error:", error);
-    return res.status(500).json({
-      code: 500,
-      message: "Internal server error",
-    });
+    return res.status(500).json({ code: 500, message: "Internal server error" });
   }
 };
 
 import { generateVietnameseRegex } from "../utils/regexLanguage.js";
+
 export const searchProducts = async (req, res) => {
   try {
     const { q, sort = "newest" } = req.query;
-
+    
     if (!q || !q.trim()) {
       return res.status(200).json({ code: 200, data: [] });
     }
 
     const keyword = q.trim();
-    const viRegex = generateVietnameseRegex(keyword); 
+    const viRegexPattern = generateVietnameseRegex(keyword).source; 
 
     const sortMap = {
       newest: { createdAt: -1 },
@@ -1135,9 +1165,9 @@ export const searchProducts = async (req, res) => {
 
     const pipeline = [
       {
-        $match: {
-          isActive: true,
-        },
+        $match: { isActive: true }
+      },
+      {
         $lookup: {
           from: "categories",
           localField: "categoryId",
@@ -1184,30 +1214,29 @@ export const searchProducts = async (req, res) => {
           },
         },
       },
-
       {
         $addFields: {
-          nameMatch: { $regexMatch: { input: "$name", regex: viRegex } },
+          nameMatch: { 
+            $regexMatch: { input: "$name", regex: viRegexPattern, options: "i" } 
+          },
           categoryMatch: {
             $cond: [
               { $ifNull: ["$category.name", false] },
-              { $regexMatch: { input: "$category.name", regex: viRegex } },
+              { $regexMatch: { input: "$category.name", regex: viRegexPattern, options: "i" } },
               false
             ]
           },
           originMatch: {
             $cond: [
               { $ifNull: ["$origin", false] },
-              { $regexMatch: { input: "$origin", regex: viRegex } },
+              { $regexMatch: { input: "$origin", regex: viRegexPattern, options: "i" } },
               false
             ]
           }
         },
       },
-
       {
         $match: {
-          isActive: true,
           $or: [
             { nameMatch: true }, 
             { categoryMatch: true },
@@ -1252,8 +1281,8 @@ export const searchProducts = async (req, res) => {
     );
 
     const products = await Product.aggregate(pipeline);
-
     return res.status(200).json({ code: 200, data: products });
+
   } catch (error) {
     console.error("Search error:", error);
     return res.status(500).json({ code: 500, message: "Internal server error" });
