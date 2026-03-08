@@ -49,10 +49,9 @@ export const authorizeRole = (allowedRoles) => {
 export const optionalProtectRoute = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
-    const token =
-      authHeader?.startsWith("Bearer ")
-        ? authHeader.split(" ")[1]
-        : req.cookies?.jwt;
+    const token = authHeader?.startsWith("Bearer ")
+      ? authHeader.split(" ")[1]
+      : req.cookies?.jwt;
 
     if (!token) {
       return next();
@@ -65,7 +64,9 @@ export const optionalProtectRoute = async (req, res, next) => {
       req.user = user;
     }
   } catch (err) {
-    console.error("Optional auth error:", err.message);
+    // Log lỗi để debug nhưng không chặn người dùng
+    console.error("Optional auth error (expired or invalid token):", err.message);
+    // Quan trọng: Nếu token lỗi, ta cứ coi như họ chưa đăng nhập và đi tiếp
   }
   next();
 };
