@@ -38,21 +38,23 @@ app.use((req, res, next) => {
 const PORT = process.env.PORT || 5000
 const __dirname = path.resolve()
 const allowedOrigins = [
-  'http://localhost:5173', 
-  'http://localhost',     
-  process.env.FRONTEND_URL 
-].filter(Boolean);
+  'http://localhost:5173',
+  'http://localhost',      
+  process.env.FRONTEND_URL  
+].filter(Boolean); 
+
 app.use(cors({
-    origin: function (origin, callback) {
-        if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-            callback(null, true);
-        } else {
-            callback(new Error('Not allowed by CORS'));
-        }
-    },
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'], 
-    credentials: true,
-    allowedHeaders: ['Content-Type', 'Authorization'] 
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.log("CORS bị chặn cho origin:", origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  credentials: true,
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 const server = createServer(app);
 const io = new Server(server, {
