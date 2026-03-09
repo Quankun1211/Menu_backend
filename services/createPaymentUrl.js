@@ -10,9 +10,8 @@ export const createPaymentUrl = async ({ orderId, amount, ip }) => {
   const date = new Date();
   const createDate = format(date, 'yyyyMMddHHmmss');
 
-  // Ép buộc lấy IPv4 chuẩn (VNPAY Sandbox không nhận IPv6)
   let cleanIp = ip.includes('::ffff:') ? ip.replace('::ffff:', '') : (ip === '::1' ? '127.0.0.1' : ip);
-  if (cleanIp === '127.0.0.1') cleanIp = '1.1.1.1'; // Fake IP thật nếu đang ở localhost để VNPAY chấp nhận
+  if (cleanIp === '127.0.0.1') cleanIp = '1.1.1.1';
 
   let vnp_Params = {
     vnp_Version: '2.1.0',

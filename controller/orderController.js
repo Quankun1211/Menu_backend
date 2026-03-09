@@ -89,7 +89,7 @@ export const createOrder = async (req, res) => {
       }
     }
 
-    const finalTotalPrice = Math.max(subTotal + shippingFee - couponDiscount, 0)
+    const finalTotalPrice = Math.max(subTotal + shippingFee - couponDiscount, 0);
 
     const [order] = await Order.create([{
       userId,
@@ -137,6 +137,7 @@ export const createOrder = async (req, res) => {
       });
     }
   } catch (err) {
+    console.error("❌ CRITICAL ERROR in createOrder:", err.message);
     if (!isCommitted) await session.abortTransaction();
     session.endSession();
     return res.status(500).json({ success: false, message: err.message });
@@ -149,7 +150,10 @@ export const vnpayIPN = async (req, res) => {
     let vnp_Params = { ...req.query };
     const secureHash = vnp_Params['vnp_SecureHash'];
 
-    if (!secureHash) return res.status(200).json({ RspCode: '97', Message: 'Hash missing' });
+    if (!secureHash) {
+      console.error("❌ Error: Hash missing from VNPAY request");
+      return res.status(200).json({ RspCode: '97', Message: 'Hash missing' });
+    }
 
     delete vnp_Params['vnp_SecureHash'];
     delete vnp_Params['vnp_SecureHashType'];
@@ -160,16 +164,33 @@ export const vnpayIPN = async (req, res) => {
     const hmac = crypto.createHmac("sha512", secretKey);
     const signed = hmac.update(Buffer.from(signData, 'utf-8')).digest("hex");
 
-    if (secureHash !== signed) return res.status(200).json({ RspCode: '97', Message: 'Invalid signature' });
+    if (secureHash !== signed) {
+      console.error("❌ Error: Invalid Signature!");
+      console.log("Calculated Hash:", signed);
+      console.log("VNPAY Hash:", secureHash);
+      return res.status(200).json({ RspCode: '97', Message: 'Invalid signature' });
+    }
 
-    const orderId = vnp_Params['vnp_TxnRef'];
+    const orderId = vnp_Params['vnp_TxnRef']?.trim();
     const rspCode = vnp_Params['vnp_ResponseCode'];
-    const order = await Order.findById(orderId.trim());
 
-    if (!order) return res.status(200).json({ RspCode: '01', Message: 'Order not found' });
-    if (order.paymentStatus !== 'pending') return res.status(200).json({ RspCode: '02', Message: 'Order already confirmed' });
+    const order = await Order.findById(orderId);
+
+    if (!order) {
+      console.error(`❌ Error: Order ${orderId} not found in DB`);
+      return res.status(200).json({ RspCode: '01', Message: 'Order not found' });
+    }
+
+    console.log(`Current Order Status: Payment=${order.paymentStatus}, Status=${order.status}`);
+
+    if (order.paymentStatus !== 'pending') {
+      console.warn("⚠️ Warning: Order was already processed (Not in pending status)");
+      return res.status(200).json({ RspCode: '02', Message: 'Order already confirmed' });
+    }
 
     if (rspCode === '00') {
+      console.log("💰 Payment Success (Code 00). Updating Database...");
+      
       if (order.couponCode) {
         const coupon = await Coupons.findOne({ code: order.couponCode });
         if (coupon) {
@@ -178,18 +199,41 @@ export const vnpayIPN = async (req, res) => {
             { userId: order.userId, couponId: coupon._id }, 
             { $set: { isUsed: true, usedAt: new Date() } }
           );
+          console.log("✅ Coupon marked as used");
         }
       }
 
-      await Order.findByIdAndUpdate(orderId, { paymentStatus: 'paid', status: 'pending', paidAt: new Date() });
-      await Transaction.findOneAndUpdate({ orderId: order._id }, { status: 'completed', gatewayDetails: { transactionId: vnp_Params['vnp_TransactionNo'], responseCode: rspCode, bankCode: vnp_Params['vnp_BankCode'], payDate: vnp_Params['vnp_PayDate'] } }, { upsert: true });
+      const updatedOrder = await Order.findByIdAndUpdate(
+        orderId, 
+        { paymentStatus: 'paid', status: 'pending', paidAt: new Date() },
+        { new: true } 
+      );
+
+
+      await Transaction.findOneAndUpdate(
+        { orderId: order._id }, 
+        { 
+          status: 'completed', 
+          gatewayDetails: { 
+            transactionId: vnp_Params['vnp_TransactionNo'], 
+            responseCode: rspCode, 
+            bankCode: vnp_Params['vnp_BankCode'], 
+            payDate: vnp_Params['vnp_PayDate'] 
+          } 
+        }, 
+        { upsert: true }
+      );
+      console.log("✅ Transaction record created/updated");
 
       return res.status(200).json({ RspCode: '00', Message: 'Success' });
     } else {
+      console.warn(`❌ Payment Failed/Cancelled. Code: ${rspCode}`);
       await Order.findByIdAndUpdate(orderId, { paymentStatus: 'failed' });
+      console.log("======= [VNPAY IPN END - FAILED] =======");
       return res.status(200).json({ RspCode: '00', Message: 'Success' });
     }
   } catch (error) {
+    console.error("🔥 CRITICAL ERROR in vnpayIPN:", error);
     return res.status(200).json({ RspCode: '99', Message: 'Internal Error' });
   }
 };
