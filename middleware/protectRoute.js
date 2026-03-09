@@ -64,9 +64,7 @@ export const optionalProtectRoute = async (req, res, next) => {
       req.user = user;
     }
   } catch (err) {
-    // Log lỗi để debug nhưng không chặn người dùng
     console.error("Optional auth error (expired or invalid token):", err.message);
-    // Quan trọng: Nếu token lỗi, ta cứ coi như họ chưa đăng nhập và đi tiếp
   }
   next();
 };

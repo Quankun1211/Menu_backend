@@ -30,6 +30,9 @@ import categoryMenuRoutes from "./routes/menuRoutes/categoryMenuRoutes.js"
 import ingredientRoutes from "./routes/menuRoutes/ingredientRoutes.js"
 import recipeRoutes from "./routes/menuRoutes/recipeRoutes.js"
 import menuRoutes from "./routes/menuRoutes/menuRoutes.js"
+
+// Notification
+import notificationRoutes from "./routes/notificationRoutes.js"
 const app = express()
 app.use((req, res, next) => {
   res.setHeader('ngrok-skip-browser-warning', 'true');
@@ -64,6 +67,12 @@ const io = new Server(server, {
   }
 });
 io.on("connection", (socket) => {
+  socket.on("join_user_room", (userId) => {
+    if (userId) {
+      socket.join(userId.toString());
+    }
+  });
+
   socket.on("join_order", (orderId) => {
     socket.join(orderId);
   });
@@ -78,6 +87,10 @@ io.on("connection", (socket) => {
 
   socket.on("shipper_request_cancel", (data) => {
     io.emit("admin_refresh_orders", { orderId: data.orderId });
+  });
+
+  socket.on("disconnect", () => {
+    // Tự động rời các phòng khi ngắt kết nối
   });
 });
 
@@ -120,13 +133,15 @@ app.use("/api/menu/ingredient", ingredientRoutes)
 app.use("/api/menu/recipe", recipeRoutes)
 app.use("/api/menu/my-menu", menuRoutes)
 
+app.use("/api/notification", notificationRoutes)
+
 app.use((req, res, next) => {
     if (req.url.includes('vnpay')) {
         console.log("🔥 CO DULIEU VNPAY GOI DEN:", req.method, req.url);
     }
     next();
 });
-
+global._io = io;
 app.set('io', io);
 server.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`)
