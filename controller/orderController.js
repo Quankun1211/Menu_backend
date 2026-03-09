@@ -8,7 +8,7 @@ import { Coupons } from "../models/couponsModel.js"
 import { refundOrderLogic } from "../utils/vnpayRefund.js"; 
 import { UserCoupon } from "../models/userCouponModel.js";
 import { Transaction } from '../models/transactionModel.js';
-
+import { sendInternalNotification } from "./notificationController.js";
 import crypto from 'crypto';
 import qs from 'qs';
 import { sortObject } from '../utils/helper.js';
@@ -49,7 +49,7 @@ export const createOrder = async (req, res) => {
       orderItems.push({
         productId: product._id,
         productName: product.name,
-        productImage: product.images[0] || "",
+        productImage: product.images || "",
         originalPrice: product.price,
         salePercent,
         price: finalPrice,
@@ -117,6 +117,16 @@ export const createOrder = async (req, res) => {
     isCommitted = true;
     session.endSession();
 
+    const firstProductImage = orderItems[0]?.productImage || "";
+
+    sendInternalNotification(
+      userId,
+      "Đặt hàng thành công",
+      `Đơn hàng đã được khởi tạo thành công.`,
+      { orderId: order._id, type: "order_created" },
+      firstProductImage
+    );
+
     if (finalTotalPrice === 0 || paymentMethod === "cod") {
       return res.status(201).json({
         success: true,
@@ -143,7 +153,6 @@ export const createOrder = async (req, res) => {
     return res.status(500).json({ success: false, message: err.message });
   }
 };
-
 export const vnpayIPN = async (req, res) => {
   try {
     res.setHeader('ngrok-skip-browser-warning', 'true');

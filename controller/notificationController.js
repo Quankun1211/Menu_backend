@@ -40,13 +40,13 @@ export const readNotification = async (req, res) => {
   }
 };
 
-export const sendInternalNotification = async (userId, title, body, metadata = {}, ioInstance = null) => {
+export const sendInternalNotification = async (userId, title, body, metadata = {}, image = null, ioInstance = null) => {
   try {
-    // 1. Lưu DB trước
     const newNotification = await Notification.create({
       userId,
       title,
       body,
+      image, 
       metadata,
       isRead: false
     });
@@ -54,7 +54,6 @@ export const sendInternalNotification = async (userId, title, body, metadata = {
     const io = ioInstance || global._io;
 
     if (io) {
-      // 2. Ép kiểu String tuyệt đối để khớp với Client emit
       const targetRoom = String(userId).trim();
       
       const socketsInRoom = io.sockets.adapter.rooms.get(targetRoom);
@@ -62,7 +61,6 @@ export const sendInternalNotification = async (userId, title, body, metadata = {
       
       console.log(`[SOCKET_DEBUG] Room: ${targetRoom} | Online Sockets: ${socketCount}`);
 
-      // 3. Gửi thông báo
       io.to(targetRoom).emit("new_notification", newNotification);
       
       return newNotification;
