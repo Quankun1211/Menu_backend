@@ -43,7 +43,8 @@ const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost',
   process.env.FRONTEND_URL,
-  'https://your-frontend-domain.vercel.app' 
+  'https://fanciful-dieffenbachia-2f571b.netlify.app', 
+  'https://menu-backend-ve33.onrender.com'
 ].filter(Boolean);
 
 app.use(cors({
