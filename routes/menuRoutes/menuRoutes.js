@@ -4,7 +4,6 @@ import { createMenu, getMenuDetail, getMenus } from "../../controller/menuContro
 const router = express.Router()
 
 router.post("/create", upload.single("image"), createMenu)
-// router.post("/create-postman", upload.single("image"), createRecipePostman )
 router.get("/get", getMenus)
 router.get("/get-detail/:id", getMenuDetail)
 

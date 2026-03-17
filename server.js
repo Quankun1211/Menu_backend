@@ -31,7 +31,6 @@ import ingredientRoutes from "./routes/menuRoutes/ingredientRoutes.js"
 import recipeRoutes from "./routes/menuRoutes/recipeRoutes.js"
 import menuRoutes from "./routes/menuRoutes/menuRoutes.js"
 
-// Notification
 import notificationRoutes from "./routes/notificationRoutes.js"
 const app = express()
 app.use((req, res, next) => {
@@ -42,9 +41,10 @@ const PORT = process.env.PORT || 5000
 const __dirname = path.resolve()
 const allowedOrigins = [
   'http://localhost:5173',
-  'http://localhost',      
-  process.env.FRONTEND_URL  
-].filter(Boolean); 
+  'http://localhost',
+  process.env.FRONTEND_URL,
+  'https://your-frontend-domain.vercel.app' 
+].filter(Boolean);
 
 app.use(cors({
   origin: function (origin, callback) {
@@ -63,7 +63,8 @@ const server = createServer(app);
 const io = new Server(server, {
   cors: {
     origin: allowedOrigins,
-    methods: ["GET", "POST"]
+    methods: ["GET", "POST"],
+    credentials: true
   }
 });
 io.on("connection", (socket) => {
@@ -143,6 +144,6 @@ app.use((req, res, next) => {
 });
 global._io = io;
 app.set('io', io);
-server.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`)
-})
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server is running on port ${PORT}`);
+});

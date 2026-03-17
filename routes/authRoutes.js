@@ -4,7 +4,6 @@ import { signUp, login, logout, verifyOTP, resendOTP, forgotPassword, resetPassw
 const router = express.Router()
 
 router.post("/register", signUp)
-// router.post("/create-supper-admin", createSuperAdmin)
 router.post('/verify-otp', verifyOTP);
 router.post('/resend-otp', resendOTP);
 router.post('/forgot-password', forgotPassword);
@@ -12,4 +11,5 @@ router.post('/reset-password', resetPassword);
 router.post("/login", login)
 router.post("/logout", logout)
 
+// router.post("/create-supper-admin", createSuperAdmin)
 export default router

@@ -1,0 +1,171 @@
+// User router
+router.get("/me", protectRoute, getMe)
+router.post("/track-view", protectRoute, trackView)
+
+// Admin router
+router.post("/register", signUp)
+router.post('/verify-otp', verifyOTP);
+router.post('/resend-otp', resendOTP);
+router.post('/forgot-password', forgotPassword);
+router.post('/reset-password', resetPassword);
+router.post("/login", login)
+router.post("/logout", logout)
+
+// Đặc sản router
+router.post("/create", upload.single("images"), createSpecialProduct)
+router.get("/get", getProductsSpecialByRegion)
+
+// Shipper router
+router.get("/orders", protectRoute, getShipperOrders)
+router.get("/all-orders", protectRoute, getAllShipperOrders)
+router.patch("/update", protectRoute, updateOrderStatus);
+router.post("/request-cancel", protectRoute, requestCancelOrder);
+router.put("/update-online", protectRoute, updateShipperStatus);
+router.put("/update-location", protectRoute, updateShipperLocation);
+
+// Sản phẩm thường router
+router.post("/create-normal", upload.single("images"), createProduct)
+router.post("/create-special", upload.single("images"), createSpecialtyProduct)
+router.post("/create/sale", createSaleItem)
+router.post("/checkout/preview", previewCheckout)
+router.get("/get-popular", getPopularProducts)
+router.get("/get-shock-deals", getShockDeals)
+// router.get("/get-all-admin", getAllProductAdmin)
+router.get("/get-suggestion", optionalProtectRoute, getSuggestedProducts)
+router.get("/get-by-category", getProductsByCategory)
+router.get("/get-by-region", getProductsByRegion)
+router.get("/get-by-special", getProductsSpecialByRegion)
+router.get("/get-latest-specialty", getLatestSpecialtyProduct)
+router.get("/get-by-normal", getNormalProducts)
+router.get("/get-by-filter", getProductsByFilter)
+router.put("/update/:id", upload.single("images"), updateProduct)
+router.get("/get-product-detail/:id", getProductDetail)
+router.get("/search", searchProducts)
+
+// Order router
+router.post("/create", protectRoute, createOrder)
+router.put("/delivered/:orderId", markOrderAsDelivered)
+router.get("/wallet", protectRoute, getMyWallet); 
+router.get("/my-coupon", protectRoute, getMyCoupons); 
+router.post("/claim-reward", protectRoute, claimMilestoneReward); 
+router.get("/vnpay-return", vnpayReturn); 
+router.get("/vnpay-ipn", vnpayIPN);
+router.post("/cancel/:orderId", protectRoute, cancelOrder)
+router.get("/get", protectRoute, getMyOrders)
+router.get("/get-detail/:orderId", protectRoute, getOrderDetail)
+
+// Notification router
+router.post("/send-notification", createNotificationFromApi)
+router.get("/get", optionalProtectRoute, getNotification)
+router.patch("/read/:id", optionalProtectRoute, readNotification)
+
+// Chức năng yêu thích
+router.post("/add-to-favourite", protectRoute, addToFavourite)
+router.post("/remove-favourite", protectRoute, removeItemsFromFavourite)
+router.get("/get-favourite", protectRoute, getFavourite)
+
+// Coupon Router
+router.post("/create", createCoupon)
+router.post("/apply", protectRoute, applyCoupon)
+
+// Chatbot router
+router.post("/ask", askChatbot)
+
+// Category router
+router.post("/create", upload.single("images"), createCategories)
+router.get("/get", getCategories)
+
+// Cart router
+router.post("/add-to-cart", protectRoute, addToCart)
+router.get("/get-cart", protectRoute, getCart)
+router.post("/remove-cart", protectRoute, removeItemsFromCart)
+router.post("/update-quantity", protectRoute, updateCartItemQuantity)
+
+// Admin router
+// AdminGet
+router.get("/users-get", protectRoute, authorizeRole(["admin", "super_admin"]), getAdminAndShippers);
+router.get("/get-all-orders", protectRoute, authorizeRole(["admin", "super_admin"]), getAllOrders);
+router.get("/get-all-products", protectRoute, authorizeRole(["admin", "super_admin"]), getProducts);
+router.get("/get-all-category", protectRoute, authorizeRole(["admin", "super_admin"]), getCategories);
+router.get("/get-all-specials", protectRoute, authorizeRole(["admin", "super_admin"]), getSpecials);
+router.get("/get-all-recipes", protectRoute, authorizeRole(["admin", "super_admin"]), getAllRecipesAdmin);
+router.get("/get-all-ingredients", protectRoute, authorizeRole(["admin", "super_admin"]), getAllIngredientsAdmin);
+router.get("/get-all-menus", protectRoute, authorizeRole(["admin", "super_admin"]), getAllMenus);
+router.get("/get-all-sales", protectRoute, authorizeRole(["admin", "super_admin"]), getSaleItems);
+router.get("/get-sales", protectRoute, authorizeRole(["admin", "super_admin"]), getAllSalesAdmin);
+router.get("/get-product-detail/:id", protectRoute, authorizeRole(["admin", "super_admin"]), getProductDetailAdmin);
+router.get("/get-recipe-detail/:id", protectRoute, authorizeRole(["admin", "super_admin"]), getRecipeByIdAdmin);
+router.get("/get-menu-detail/:id", protectRoute, authorizeRole(["admin", "super_admin"]), getMenuById);
+
+// AdminCreate
+router.post("/create-user", protectRoute, authorizeRole(["admin", "super_admin"]), registerUser)
+router.post("/create-category", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), createCategory)
+router.post("/create-product", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), createProduct)
+router.post("/create-sale", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), createSale)
+router.post("/create-ingredient", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), createIngredient)
+router.post("/create-recipe", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), createRecipeAdmin)
+router.post("/create-menu", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), createMenu)
+
+// AdminUpdate
+router.patch("/users-update/:id", protectRoute, authorizeRole(["admin", "super_admin"]), updateUser);
+router.put("/category-update/:id", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), updateCategory);
+router.put("/product-update/:id", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), updateProductAdmin);
+router.put("/sale-update/:id", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), updateSale);
+router.put("/ingredient-update/:id", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), updateIngredient);
+router.put("/recipe-update/:id", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), updateRecipeAdmin);
+router.put("/menu-update/:id", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), updateMenu);
+
+// AdminDelete
+router.delete("/users-delete/:id", protectRoute, authorizeRole(["admin", "super_admin"]), deleteUser);
+router.delete("/category-delete/:id", protectRoute, authorizeRole(["admin", "super_admin"]), deleteCategory);
+router.delete("/product-delete/:id", protectRoute, authorizeRole(["admin", "super_admin"]), deleteProductAdmin);
+router.delete("/sale-delete/:id", protectRoute, authorizeRole(["admin", "super_admin"]), deleteSale);
+router.delete("/ingredient-delete/:id", protectRoute, authorizeRole(["admin", "super_admin"]), deleteIngredient);
+router.delete("/recipe-delete/:id", protectRoute, authorizeRole(["admin", "super_admin"]), deleteRecipeAdmin);
+router.delete("/menu-delete/:id", protectRoute, authorizeRole(["admin", "super_admin"]), deleteMenu);
+
+// Admin role
+router.patch("/process-cancel", protectRoute, processCancelOrder);
+router.post("/assign-order", assignOrderToShipper)
+router.post("/approve-order-cancelled", approveCancelOrder)
+
+// Address router
+router.post("/add", protectRoute, addAddress)
+router.get("/get", protectRoute, getAddresses)
+router.get("/get-detail/:addressId", protectRoute, getAddressById)
+router.put("/update/:addressId", protectRoute, updateAddress)
+router.put("/default/:addressId", protectRoute, setDefaultAddress)
+router.delete("/remove/:addressId", protectRoute ,deleteAddress)
+
+// Category menu router
+router.post("/create", upload.single("images"), createCategoryMenu)
+router.get("/get", getCategoryMenu)
+
+// Ingredient router
+router.post("/create", upload.single("image"), createIngredient)
+router.get("/get-all", getAllIngredient)
+router.get("/get-filter", getSystemIngredients)
+router.get("/get/:ingredientId", getIngredientById)
+
+// Menu router
+router.post("/create", upload.single("image"), createMenu)
+router.get("/get", getMenus)
+router.get("/get-detail/:id", getMenuDetail)
+
+// Recipe router
+router.post("/create", upload.single("image"), createRecipe)
+router.post("/category/create", createCategoryRecipe)
+router.get("/category/get", getCategoryRecipe)
+router.post("/create-postman", upload.single("image"), createRecipePostman )
+router.get("/get-detail/:id", getRecipeDetail)
+router.get("/get-by-category", optionalProtectRoute, getRecipesByCategory)
+router.get("/get-lastest", getLatestRecipeDetail)
+
+// My recipe routes
+router.post("/create-my-recipes", protectRoute, upload.single("image"), createUserRecipe)
+router.get("/get-my-recipes", protectRoute, getRecipes)
+router.get("/get-my-recipe-detail/:recipeId", protectRoute, getMyRecipeDetail)
+router.put("/update-my-recipe/:recipeId", protectRoute, upload.single("image"), updateUserRecipe)
+router.delete("/delete-my-recipe/:recipeId", protectRoute, deleteUserRecipe);
+router.post("/save/:recipeId", protectRoute, toggleSaveRecipe);
+router.get("/saved-list", protectRoute, getSavedRecipes);
