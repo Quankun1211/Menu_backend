@@ -1,6 +1,7 @@
 import { Favourite } from "../models/favouriteModel.js";
 import { FavouriteItem } from "../models/favouriteItem.js";
 import mongoose from "mongoose";
+import { triggerAIUpdate } from "../utils/trackingUserBehavior.js";
 export const addToFavourite = async (req, res) => {
   try {
     const userId = req.user.id; 
@@ -29,7 +30,7 @@ export const addToFavourite = async (req, res) => {
     } else {
       return res.status(200).json({favourite})
     }
-
+    triggerAIUpdate(userId)
     return res.status(200).json({
       code: 200,
       message: "Add to favourite successfully",

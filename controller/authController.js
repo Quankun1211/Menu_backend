@@ -2,6 +2,8 @@ import { User } from "../models/userModel.js";
 import bcryptjs from "bcryptjs"
 import generateTokenAndSetCookie from "../utils/generateToken.js";
 import {sendOTPEmail} from "../utils/mailer.js"
+import { triggerAIUpdate } from "../utils/trackingUserBehavior.js";
+import { Notification } from "../models/notification/notificationSchema.js"
 const generateRandomAvatar = (username) => {
   const params = [
     'backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf', 
@@ -56,6 +58,14 @@ export const signUp = async (req, res) => {
     } catch (mailError) {
       console.error("Gửi mail thất bại:", mailError);
     }
+
+    await Notification.create({
+      userId: newUser._id,
+      title: "Chào mừng bạn mới!",
+      body: `Chào mừng ${name} tới với Bếp Việt. Chúc bạn có những trải nghiệm tuyệt vời!`,
+      type: 'SYSTEM_UPDATE',
+      isRead: false
+    });
 
     return res.status(201).json({
       code: 201,
@@ -216,6 +226,7 @@ export const login = async (req, res) => {
         }
         const token = generateTokenAndSetCookie(user, res)
         console.log("Login ok");
+        triggerAIUpdate(user._id)
         
         res.status(200).json({
             code: 200,

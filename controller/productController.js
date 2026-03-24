@@ -8,6 +8,9 @@ import {FavouriteItem} from "../models/favouriteItem.js"
 import {Favourite} from "../models/favouriteModel.js"
 import { Ingredient } from "../models/menuModels/ingredientModel.js";
 import { Recipe } from "../models/menuModels/RecipeModel.js";
+import axios from "axios";
+import { triggerAIUpdate } from "../utils/trackingUserBehavior.js";
+
 export const createProduct = async (req, res) => {
   try {
     const data = req.body;
@@ -272,8 +275,10 @@ export const createSaleItem = async (req, res) => {
 export const getShockDeals = async (req, res) => {
   try {
     const now = new Date();
-
-    const limit = 4;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 12;
+    const skip = (page - 1) * limit;
+    const pageSize = parseInt(limit);
 
     const products = await Product.find({
       salePercent: { $ne: null },
@@ -292,21 +297,27 @@ export const getShockDeals = async (req, res) => {
       .sort({ soldCount: -1 })
       .lean();
 
-    const validProducts = products
-      .filter(p => p.salePercent)
+    const validProducts = products.filter(p => p.salePercent);
+    
+    const totalItems = validProducts.length;
+    const paginatedProducts = validProducts.slice(skip, skip + limit);
 
     return res.status(200).json({
       code: 200,
-      data: {
-        data: validProducts
-      },
+      data: paginatedProducts,
+      pagination: {
+        totalItems,
+        totalPages: Math.ceil(totalItems / limit),
+        currentPage: parseInt(page),
+        pageSize,
+        hasNextPage: skip + products.length < totalItems
+      }
     });
   } catch (error) {
     console.error("Get shock deals error:", error);
     return res.status(500).json({ error: "Internal server" });
   }
 };
-
 
 export const getPopularProductsByRegion = async (req, res) => {
   try {
@@ -401,123 +412,152 @@ export const trackView = async (req, res) => {
 
 export const getSuggestedProducts = async (req, res) => {
   try {
+    const { page = 1, limit = 10, sort = "newest" } = req.query;
     const now = new Date();
-    const userId = req.user?.id;
-    let suggestedCategoryIds = new Set();
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const userId = req.user?._id || req.user?.id;
+    const pageSize = parseInt(limit);
+
+    let suggestedIds = [];
 
     if (userId) {
-      const [user, myRecipes, favourite] = await Promise.all([
-        User.findById(userId)
-          .populate({
-            path: "savedRecipes",
-            select: "ingredients",
-          })
-          .lean(),
-        Recipe.find({ creatorId: userId }).select("ingredients").lean(),
-        Favourite.findOne({ userId: userId }).select("_id").lean(),
-      ]);
+      try {
+        const aiUrl = `http://127.0.0.1:8000/recommend/${userId}`;
+        const aiResponse = await axios.get(aiUrl, { timeout: 3000 }).catch(() => null);
 
-      if (user?.viewHistory?.length) {
-        user.viewHistory
-          .sort((a, b) => b.viewCount - a.viewCount || new Date(b.lastViewedAt) - new Date(a.lastViewedAt))
-          .slice(0, 2)
-          .forEach(item => {
-            if (item.categoryId) suggestedCategoryIds.add(item.categoryId.toString());
-          });
-      }
-
-      if (favourite) {
-        const favItems = await FavouriteItem.find({ favouriteId: favourite._id })
-          .populate({
-            path: "productId",
-            select: "categoryId",
-          })
-          .lean();
-
-        favItems.forEach(item => {
-          if (item.productId?.categoryId) {
-            suggestedCategoryIds.add(item.productId.categoryId.toString());
-          }
-        });
-      }
-
-      const allIngredients = [
-        ...(myRecipes?.flatMap(r => r.ingredients || []) || []),
-        ...(user?.savedRecipes?.flatMap(r => r.ingredients || []) || [])
-      ];
-
-      const validIngredientNames = allIngredients
-        .filter(i => i && typeof i.name === 'string')
-        .map(i => i.name.trim())
-        .filter(name => name.length > 0);
-
-      const uniqueIngredientNames = [...new Set(validIngredientNames)];
-
-      if (uniqueIngredientNames.length > 0) {
-        const productsFromIngredients = await Product.find({
-          name: { $in: uniqueIngredientNames.map(name => new RegExp(name, "i")) },
-          isActive: true
-        }).select("categoryId").lean();
-
-        productsFromIngredients.forEach(p => {
-          if (p.categoryId) suggestedCategoryIds.add(p.categoryId.toString());
-        });
+        if (aiResponse?.data) {
+            console.log(`[AI_LOG] User: ${userId}`);
+            console.log(`[AI_LOG] IDs nhận được: ${JSON.stringify(aiResponse.data.data?.map(p => p._id) || aiResponse.data.recommendations)}`);
+        } else {
+            console.log(`[AI_LOG] ⚠️ Không nhận được phản hồi từ AI, dùng fallback Category.`);
+        }
+        if (aiResponse?.data?.data) {
+          suggestedIds = aiResponse.data.data.map(p => p._id.toString());
+        } else if (aiResponse?.data?.recommendations) {
+          suggestedIds = aiResponse.data.recommendations.map(id => id.toString());
+        }
+      } catch (err) {
+        console.error("AI Suggestion Fetch Error:", err.message);
       }
     }
 
-    let products = [];
-    if (suggestedCategoryIds.size > 0) {
-      products = await Product.find({
-        categoryId: { $in: Array.from(suggestedCategoryIds) },
-        isActive: true,
-        isSpecialty: false
-      })
-      .populate({
-        path: "salePercent",
-        match: { startDate: { $lte: now }, endDate: { $gte: now } },
-        select: "percent startDate endDate",
-      })
-      .populate("categoryId", "name slug")
-      .sort({ soldCount: -1, viewCount: -1 })
-      .limit(20);
+    let categoryIds = [];
+    if (suggestedIds.length === 0 && userId) {
+      const user = await User.findById(userId).select("viewHistory").lean();
+      if (user?.viewHistory) {
+        categoryIds = user.viewHistory.slice(0, 5).map(item => item.categoryId.toString());
+      }
     }
 
-    if (products.length < 8) {
-      const excludeIds = products.map(p => p._id);
-      const fallbackProducts = await Product.find({
-        _id: { $nin: excludeIds },
-        isActive: true,
-        isSpecialty: false
-      })
-      .populate({
-        path: "salePercent",
-        match: { startDate: { $lte: now }, endDate: { $gte: now } },
-        select: "percent startDate endDate",
-      })
-      .populate("categoryId", "name slug")
-      .sort({ soldCount: -1, viewCount: -1 })
-      .limit(20);
+    const match = { isActive: true, isSpecialty: false };
 
-      products = [...products, ...fallbackProducts];
+    if (suggestedIds.length > 0) {
+      match._id = { $in: suggestedIds.map(id => new mongoose.Types.ObjectId(id)) };
+    } else if (categoryIds.length > 0) {
+      match.categoryId = { $in: categoryIds.map(id => new mongoose.Types.ObjectId(id)) };
     }
 
-    const uniqueProducts = Array.from(
-      new Map(products.map((p) => [p._id.toString(), p])).values()
-    ).slice(0, 20);
+    const sortMap = {
+      newest: { createdAt: -1 },
+      price_asc: { finalPrice: 1 },
+      price_desc: { finalPrice: -1 },
+      sold_desc: { soldCount: -1 }
+    };
+
+    const aiIdObjects = suggestedIds.map(id => new mongoose.Types.ObjectId(id));
+
+    const results = await Product.aggregate([
+      { $match: match },
+      {
+        $lookup: {
+          from: "saleitems",
+          localField: "salePercent",
+          foreignField: "_id",
+          as: "sale",
+        },
+      },
+      { $unwind: { path: "$sale", preserveNullAndEmptyArrays: true } },
+      {
+        $addFields: {
+          aiOrder: { $indexOfArray: [aiIdObjects, "$_id"] },
+          isPromotion: {
+            $cond: [
+              {
+                $and: [
+                  { $ifNull: ["$sale.percent", false] },
+                  { $lte: ["$sale.startDate", now] },
+                  { $gte: ["$sale.endDate", now] },
+                ],
+              },
+              1, 0,
+            ],
+          },
+          salePercent: {
+            $cond: [
+              { $eq: ["$isPromotion", 1] },
+              {
+                percent: "$sale.percent",
+                startDate: "$sale.startDate",
+                endDate: "$sale.endDate",
+              },
+              null,
+            ],
+          },
+          finalPrice: {
+            $cond: [
+              { $eq: ["$isPromotion", 1] },
+              { $multiply: ["$price", { $divide: [{ $subtract: [100, "$sale.percent"] }, 100] }] },
+              "$price",
+            ],
+          },
+        },
+      },
+      { 
+        $sort: suggestedIds.length > 0 
+          ? { aiOrder: 1 } 
+          : (sortMap[sort] || sortMap.sold_desc) 
+      },
+      {
+        $facet: {
+          metadata: [{ $count: "total" }],
+          data: [
+            { $skip: skip },
+            { $limit: pageSize },
+            {
+              $lookup: {
+                from: "categories",
+                localField: "categoryId",
+                foreignField: "_id",
+                as: "categoryId",
+              },
+            },
+            { $unwind: "$categoryId" },
+            { $project: { sale: 0, isPromotion: 0, aiOrder: 0 } },
+          ],
+        },
+      },
+    ]);
+
+    const totalItems = results[0].metadata[0]?.total || 0;
+    const products = results[0].data;
 
     return res.status(200).json({
       code: 200,
-      data: uniqueProducts,
+      data: products,
+      pagination: {
+        totalItems,
+        totalPages: Math.ceil(totalItems / pageSize),
+        currentPage: parseInt(page),
+        pageSize,
+        hasNextPage: skip + products.length < totalItems
+      }
     });
+
   } catch (error) {
     console.error("getSuggestedProducts error:", error);
-    return res.status(500).json({
-      code: 500,
-      data: [],
-    });
+    return res.status(500).json({ code: 500, message: "Internal server error" });
   }
 };
-
 export const getProductsByCategory = async (req, res) => {
   try {
     const { categoryId, sort = "newest" } = req.query;
@@ -645,8 +685,11 @@ export const getAllProductAdmin = async (req, res) => {
 };
 export const getProductsByRegion = async (req, res) => {
   try {
-    const { region, categoryId, sort = "newest" } = req.query;
+    const { region, categoryId, sort = "newest", page = 1, limit = 10 } = req.query;
     const now = new Date();
+    
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const pageSize = parseInt(limit);
 
     if (!["bac", "trung", "nam"].includes(region)) {
       return res.status(400).json({
@@ -665,16 +708,15 @@ export const getProductsByRegion = async (req, res) => {
       match.categoryId = new mongoose.Types.ObjectId(categoryId);
     }
 
-    // Định nghĩa logic sort mặc định cho các case thông thường
     const sortMap = {
       newest: { createdAt: -1 },
       price_asc: { finalPrice: 1 },
       price_desc: { finalPrice: -1 },
       sold_desc: { soldCount: -1 },
-      sale: { isPromotion: -1, soldCount: -1 } // Sale đứng đầu, sau đó đến bán chạy
+      sale: { isPromotion: -1, soldCount: -1 }
     };
 
-    const products = await Product.aggregate([
+    const results = await Product.aggregate([
       { $match: match },
       {
         $lookup: {
@@ -692,7 +734,6 @@ export const getProductsByRegion = async (req, res) => {
       },
       {
         $addFields: {
-          // Kiểm tra xem sản phẩm có đang trong chương trình sale hợp lệ không
           isPromotion: {
             $cond: [
               {
@@ -739,28 +780,46 @@ export const getProductsByRegion = async (req, res) => {
           },
         },
       },
-      // Sắp xếp theo cấu hình sortMap
       { $sort: sortMap[sort] || sortMap.newest },
       {
-        $lookup: {
-          from: "categories",
-          localField: "categoryId",
-          foreignField: "_id",
-          as: "categoryId",
-        },
-      },
-      { $unwind: "$categoryId" },
-      {
-        $project: {
-          sale: 0,
-          isPromotion: 0, // Ẩn trường bổ trợ khi trả về kết quả
+        $facet: {
+          metadata: [{ $count: "total" }],
+          data: [
+            { $skip: skip },
+            { $limit: pageSize },
+            {
+              $lookup: {
+                from: "categories",
+                localField: "categoryId",
+                foreignField: "_id",
+                as: "categoryId",
+              },
+            },
+            { $unwind: "$categoryId" },
+            {
+              $project: {
+                sale: 0,
+                isPromotion: 0,
+              },
+            },
+          ],
         },
       },
     ]);
 
+    const totalItems = results[0].metadata[0]?.total || 0;
+    const products = results[0].data;
+
     return res.status(200).json({
       code: 200,
       data: products,
+      pagination: {
+        totalItems,
+        totalPages: Math.ceil(totalItems / pageSize),
+        currentPage: parseInt(page),
+        pageSize,
+        hasNextPage: skip + products.length < totalItems
+      }
     });
   } catch (error) {
     console.error("getProductsByRegion error:", error);
@@ -1083,14 +1142,12 @@ export const getProductDetail = async (req, res) => {
                               as: "ing",
                               cond: {
                                 $or: [
-                                  // Trường hợp 1: Recipe dùng trực tiếp Product ID
                                   {
                                     $and: [
                                       { $eq: ["$$ing.itemType", "Product"] },
                                       { $eq: ["$$ing.ingredientId", "$$pId"] }
                                     ]
                                   },
-                                  // Trường hợp 2: Recipe dùng Ingredient ID mà Ingredient đó trỏ về Product này
                                   {
                                     $and: [
                                       { $eq: ["$$ing.itemType", "Ingredient"] },
@@ -1132,6 +1189,14 @@ export const getProductDetail = async (req, res) => {
     );
 
     const products = await Product.aggregate(pipeline);
+    
+    if (products && products.length > 0) {
+      const currentProductId = products[0]._id.toString();
+      
+      if (req.user && req.user.id) {
+        triggerAIUpdate(req.user.id, currentProductId);
+      }
+    }
 
     return res.status(200).json({
       code: 200,
@@ -1279,6 +1344,9 @@ export const searchProducts = async (req, res) => {
         },
       }
     );
+    if (req.user && req.user.id) {
+      triggerAIUpdate(req.user.id)
+    }
 
     const products = await Product.aggregate(pipeline);
     return res.status(200).json({ code: 200, data: products });
@@ -1314,7 +1382,6 @@ export const previewCheckout = async (req, res) => {
           isActive: true,
         },
       },
-
       {
         $lookup: {
           from: "saleitems",
@@ -1329,7 +1396,6 @@ export const previewCheckout = async (req, res) => {
           preserveNullAndEmptyArrays: true,
         },
       },
-
       {
         $addFields: {
           salePercent: {
@@ -1343,33 +1409,36 @@ export const previewCheckout = async (req, res) => {
               null,
             ],
           },
-
           finalPrice: {
-            $cond: [
+            $round: [
               {
-                $and: [
-                  { $ifNull: ["$sale.percent", false] },
-                  { $lte: ["$sale.startDate", new Date()] },
-                  { $gte: ["$sale.endDate", new Date()] },
-                ],
-              },
-              {
-                $multiply: [
-                  "$price",
+                $cond: [
                   {
-                    $divide: [
-                      { $subtract: [100, "$sale.percent"] },
-                      100,
+                    $and: [
+                      { $ifNull: ["$sale.percent", false] },
+                      { $lte: ["$sale.startDate", new Date()] },
+                      { $gte: ["$sale.endDate", new Date()] },
                     ],
                   },
+                  {
+                    $multiply: [
+                      "$price",
+                      {
+                        $divide: [
+                          { $subtract: [100, "$sale.percent"] },
+                          100,
+                        ],
+                      },
+                    ],
+                  },
+                  "$price",
                 ],
               },
-              "$price",
+              0 
             ],
           },
         },
       },
-
       {
         $project: {
           sale: 0,
@@ -1380,21 +1449,20 @@ export const previewCheckout = async (req, res) => {
     if (products.length !== items.length) {
       return res.status(400).json({
         code: 400,
-        message: "Một số sản phẩm không tồn tại",
+        message: "Một số sản phẩm không tồn tại hoặc đã ngừng kinh doanh",
       });
     }
 
     let totalAmount = 0;
     
-    items.map(item => {
-      console.log(item.productId);
-    })
     const checkoutItems = items.map(item => {
       const product = products.find(
         p => p._id.toString() === item.productId
       );
 
-      const itemTotal = product.finalPrice * item.quantity;
+      const qty = Math.ceil(Number(item.quantity) || 0); 
+      
+      const itemTotal = product.finalPrice * qty;
       totalAmount += itemTotal;
 
       return {
@@ -1403,7 +1471,7 @@ export const previewCheckout = async (req, res) => {
         price: product.price,
         sale: product.salePercent,
         finalPrice: product.finalPrice,
-        quantity: item.quantity,
+        quantity: qty,
         total: itemTotal,
       };
     });
@@ -1412,7 +1480,7 @@ export const previewCheckout = async (req, res) => {
       code: 200,
       data: {
         items: checkoutItems,
-        totalAmount,
+        totalAmount: Math.round(totalAmount), 
       },
     });
   } catch (error) {

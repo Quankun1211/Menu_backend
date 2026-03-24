@@ -1,11 +1,15 @@
 import crypto from 'crypto';
 import { format } from 'date-fns';
 
-export const createPaymentUrl = async ({ orderId, amount, ip }) => {
+export const createPaymentUrl = async ({ orderId, amount, ip, platform }) => {
   const tmnCode = process.env.VNP_TMN_CODE;
   const secretKey = process.env.VNP_HASH_SECRET;
   const vnpUrl = process.env.VNP_URL;
-  const returnUrl = process.env.VNP_RETURN_URL;
+  
+  let returnUrl = process.env.VNP_RETURN_URL;
+  if (platform === 'web') {
+    returnUrl = "http://localhost:5173/checkout/payment-check";
+  }
 
   const date = new Date();
   const createDate = format(date, 'yyyyMMddHHmmss');

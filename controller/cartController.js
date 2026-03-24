@@ -1,6 +1,7 @@
 import { CartItems } from "../models/cartsItemModel.js";
 import { Cart } from "../models/cartsModel.js";
 import mongoose from "mongoose";
+import { triggerAIUpdate } from "../utils/trackingUserBehavior.js";
 
 export const addToCart = async (req, res) => {
   try {
@@ -36,6 +37,10 @@ export const addToCart = async (req, res) => {
         quantity,
       });
     }
+    if (req.user && req.user.id) {
+      triggerAIUpdate(userId, productId.toString());
+    }
+    
 
     return res.status(200).json({
       code: 200,
@@ -213,6 +218,9 @@ export const updateCartItemQuantity = async (req, res) => {
         code: 404,
         message: "Cart item not found",
       });
+    }
+    if (req.user && req.user.id) {
+      triggerAIUpdate(userId, productId.toString());
     }
 
     return res.status(200).json({

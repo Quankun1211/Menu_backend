@@ -14,6 +14,9 @@ import qs from 'qs';
 import { sortObject } from '../utils/helper.js';
 import { validateAndCalculateCoupon } from "../utils/helper.js";
 import { createPaymentUrl } from "../services/createPaymentUrl.js";
+import { triggerAIUpdate } from "../utils/trackingUserBehavior.js";
+
+import { UserBehavior } from "../models/userBehaviorModel.js";
 
 export const createOrder = async (req, res) => {
   const session = await mongoose.startSession();
@@ -22,7 +25,7 @@ export const createOrder = async (req, res) => {
 
   try {
     const userId = req.user.id;
-    const { items, address, couponCode, source, paymentMethod = "cod", shippingFee = 0 } = req.body;
+    const { items, address, couponCode, source, paymentMethod = "cod", shippingFee = 0, platform = "app" } = req.body;
 
     if (!items?.length) throw new Error("Giỏ hàng trống");
 
@@ -117,6 +120,21 @@ export const createOrder = async (req, res) => {
     isCommitted = true;
     session.endSession();
 
+    try {
+      const newBehavior = await UserBehavior.create({
+        userId: new mongoose.Types.ObjectId(userId), // Ép kiểu ObjectId chắc chắn
+        action: "order",
+        targetId: new mongoose.Types.ObjectId(order._id), // Ép kiểu cho chắc
+        targetType: "Order",
+        weight: 5,
+      });
+      console.log("✅ Đã lưu hành vi:", newBehavior._id);
+    } catch (behaviorError) {
+      console.error("❌ Lỗi lưu UserBehavior:", behaviorError.message);
+    }
+
+    triggerAIUpdate(userId, order._id.toString());
+
     const firstProductImage = orderItems[0]?.productImage || "";
 
     sendInternalNotification(
@@ -137,10 +155,10 @@ export const createOrder = async (req, res) => {
       const paymentUrl = await createPaymentUrl({
         orderId: order._id,
         amount: finalTotalPrice,
-        paymentMethod: paymentMethod,
-        ip: req.ip
+        ip: req.ip,
+        platform: platform 
       });
-
+      
       return res.status(201).json({
         success: true,
         data: { orderId: order._id, totalPrice: finalTotalPrice, paymentUrl }

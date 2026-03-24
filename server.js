@@ -44,6 +44,7 @@ const allowedOrigins = [
   'http://localhost',
   process.env.FRONTEND_URL,
   'https://fanciful-dieffenbachia-2f571b.netlify.app', 
+  'https://warm-chaja-2bce2f.netlify.app', 
   'https://menu-backend-ve33.onrender.com'
 ].filter(Boolean);
 

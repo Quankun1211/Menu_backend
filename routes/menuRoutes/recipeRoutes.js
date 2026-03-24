@@ -4,24 +4,25 @@ import { createRecipe, createRecipePostman, getLatestRecipeDetail, getRecipeDeta
 import { createCategoryRecipe, getCategoryRecipe } from "../../controller/menuController/categoryMenuController.js"
 import { protectRoute, optionalProtectRoute } from "../../middleware/protectRoute.js"
 import { createUserRecipe, getRecipes, getMyRecipeDetail, updateUserRecipe, deleteUserRecipe } from "../../controller/menuController/userRecipeController.js"
-
+import {trackBehavior} from "../../utils/trackingUserBehavior.js"
 const router = express.Router()
 
+router.get("/get-detail/:id", optionalProtectRoute, trackBehavior("view_recipe", "Recipe"), getRecipeDetail)
+router.get("/get-by-category", optionalProtectRoute, trackBehavior("view_category", "Recipe"), getRecipesByCategory)
+router.get("/get-lastest", optionalProtectRoute, trackBehavior("view_recipe", "Recipe"), getLatestRecipeDetail)
+router.get("/saved-list", optionalProtectRoute, getSavedRecipes)
+
+// Các route bắt buộc đăng nhập
+router.post("/save/:recipeId", protectRoute, trackBehavior("favourite", "Recipe"), toggleSaveRecipe)
+router.get("/get-my-recipe-detail/:recipeId", protectRoute, trackBehavior("view_recipe", "Recipe"), getMyRecipeDetail)
+router.post("/create-my-recipes", protectRoute, upload.single("image"), createUserRecipe)
+router.get("/get-my-recipes", protectRoute, getRecipes)
+router.put("/update-my-recipe/:recipeId", protectRoute, upload.single("image"), updateUserRecipe)
+router.delete("/delete-my-recipe/:recipeId", protectRoute, deleteUserRecipe)
+
+// Các route quản trị (Admin/Postman)
 router.post("/create", upload.single("image"), createRecipe)
 router.post("/category/create", createCategoryRecipe)
 router.get("/category/get", getCategoryRecipe)
-router.post("/create-postman", upload.single("image"), createRecipePostman )
-router.get("/get-detail/:id", getRecipeDetail)
-router.get("/get-by-category", optionalProtectRoute, getRecipesByCategory)
-router.get("/get-lastest", getLatestRecipeDetail)
-
-// My recipe routes
-router.post("/create-my-recipes", protectRoute, upload.single("image"), createUserRecipe)
-router.get("/get-my-recipes", protectRoute, getRecipes)
-router.get("/get-my-recipe-detail/:recipeId", protectRoute, getMyRecipeDetail)
-router.put("/update-my-recipe/:recipeId", protectRoute, upload.single("image"), updateUserRecipe)
-router.delete("/delete-my-recipe/:recipeId", protectRoute, deleteUserRecipe);
-router.post("/save/:recipeId", protectRoute, toggleSaveRecipe);
-router.get("/saved-list", protectRoute, getSavedRecipes);
-
+router.post("/create-postman", upload.single("image"), createRecipePostman)
 export default router

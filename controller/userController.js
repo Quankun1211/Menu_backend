@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken";
 import { User } from "../models/userModel.js";
+import { triggerAIUpdate } from "../utils/trackingUserBehavior.js";
 
 export const trackViewCategory = async (userId, categoryId) => {
   const cooldown = 30 * 60 * 1000 
@@ -36,6 +37,7 @@ export const getMe = async (req, res) => {
         if (!user) {
             return res.status(404).json({ message: "Không tìm thấy thông tin người dùng" });
         }
+        triggerAIUpdate(user._id)
 
         res.status(200).json({
             success: true,

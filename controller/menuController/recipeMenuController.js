@@ -3,7 +3,11 @@ import { Ingredient } from "../../models/menuModels/ingredientModel.js";
 import { Recipe } from "../../models/menuModels/RecipeModel.js";
 import cloudinary from "../../config/cloudinary.js";
 import {User} from "../../models/userModel.js"
+import {SaleItem} from "../../models/saleItemModel.js"
+
+const Sale = mongoose.models.SaleItem || mongoose.model("SaleItem", SaleItem.schema);
 import mongoose from "mongoose";
+import { triggerAIUpdate } from "../../utils/trackingUserBehavior.js";
 export const createRecipe = async (req, res) => {
   try {
     const { 
@@ -87,18 +91,14 @@ export const createRecipe = async (req, res) => {
     return res.status(500).json({ error: "Lỗi hệ thống khi tạo công thức" });
   }
 };
-
 export const getRecipeDetail = async (req, res) => {
   try {
     const { id } = req.params;
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "ID không hợp lệ" });
-    }
 
     const recipe = await Recipe.findById(id)
       .populate({
         path: "ingredients.ingredientId",
-        select: "name customName price image images unit" 
+        select: "name customName price salePercent image images unit",
       })
       .populate("category")
       .lean();
@@ -107,13 +107,45 @@ export const getRecipeDetail = async (req, res) => {
       return res.status(404).json({ message: "Không tìm thấy công thức" });
     }
 
+    const saleIds = recipe.ingredients
+      .map(item => item.ingredientId?.salePercent)
+      .filter(id => id != null);
+
+    const sales = await SaleItem.find({ _id: { $in: saleIds } }).lean();
+
+    const now = new Date();
+    if (recipe.ingredients) {
+      recipe.ingredients = recipe.ingredients.map(item => {
+        const ingredient = item.ingredientId;
+        if (ingredient && ingredient.salePercent) {
+          const saleData = sales.find(s => s._id.toString() === ingredient.salePercent.toString());
+          
+          if (saleData) {
+            const isActive = now >= new Date(saleData.startDate) && now <= new Date(saleData.endDate);
+            
+            ingredient.salePercent = saleData; 
+
+            if (isActive) {
+              ingredient.calculatedSalePrice = Math.ceil(ingredient.price * (1 - saleData.percent / 100));
+              ingredient.isSaleActive = true;
+            } else {
+              ingredient.isSaleActive = false;
+            }
+          }
+        }
+        return item;
+      });
+    }
+
     const extraInfo = [];
     if (recipe.tips?.nutrition) extraInfo.push({ type: 'nutrition', data: recipe.tips.nutrition });
     if (recipe.tips?.folkTips?.length > 0) extraInfo.push({ type: 'folkTips', data: recipe.tips.folkTips });
     if (recipe.suggestedSideDishes?.dishes?.length > 0) extraInfo.push({ type: 'suggestedSideDishes', data: recipe.suggestedSideDishes });
 
     const { tips, suggestedSideDishes, ...restOfRecipe } = recipe;
-
+    if(req.user && req.user.id) {
+      triggerAIUpdate(req.user.id, id)
+    }
     return res.status(200).json({
       success: true,
       data: { ...restOfRecipe, extraInfo },
@@ -122,7 +154,6 @@ export const getRecipeDetail = async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 };
-
 export const getRecipesByCategory = async (req, res) => {
   try {
     const { categoryId } = req.query;
@@ -353,17 +384,36 @@ export const toggleSaveRecipe = async (req, res) => {
 
 export const getSavedRecipes = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).populate({
-      path: "savedRecipes",
-      select: "name image cookTime owner difficulty description", 
-      populate: { path: "owner", select: "username" } 
-    });
+    if (!req.user) {
+      return res.status(401).json({ 
+        success: false, 
+        message: "Vui lòng đăng nhập để xem danh sách đã lưu" 
+      });
+    }
+
+    const user = await User.findById(req.user.id)
+      .populate({
+        path: "savedRecipes",
+        select: "name image cookTime difficulty description", 
+      })
+      .lean();
+
+    if (!user) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Không tìm thấy thông tin người dùng" 
+      });
+    }
 
     res.status(200).json({
       success: true,
-      data: user.savedRecipes
+      data: user.savedRecipes || []
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: "Lỗi khi lấy danh sách đã lưu" });
+    console.error("DETAILED ERROR:", error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message || "Lỗi khi lấy danh sách đã lưu" 
+    });
   }
 };

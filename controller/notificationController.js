@@ -20,7 +20,40 @@ export const getNotification = async (req, res) => {
     res.status(500).json({ message: "Lỗi khi lấy thông báo", error: error.message });
   }
 };
+export const readAllNotifications = async (req, res) => {
+  try {
+    const userId = req.user?._id;
+    
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Bạn cần đăng nhập để thực hiện thao tác này",
+      });
+    }
 
+    const result = await Notification.updateMany(
+      { 
+        userId: userId, 
+        isRead: false 
+      },
+      { 
+        $set: { isRead: true } 
+      }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: `Đã đánh dấu ${result.modifiedCount} thông báo là đã đọc`,
+      data: null,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi hệ thống khi cập nhật thông báo",
+      error: error.message,
+    });
+  }
+};
 export const readNotification = async (req, res) => {
   try {
     const { id } = req.params;

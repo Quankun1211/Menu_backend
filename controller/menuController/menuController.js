@@ -3,6 +3,8 @@ import { Menu } from "../../models/menuModels/menuModel.js";
 import { Recipe } from "../../models/menuModels/RecipeModel.js";
 import cloudinary from "../../config/cloudinary.js";
 import mongoose from "mongoose";
+import { Product } from "../../models/productsModel.js";
+import { SaleItem } from "../../models/saleItemModel.js";
 export const createMenu = async (req, res) => {
   try {
     let { 
@@ -165,7 +167,11 @@ export const getMenuDetail = async (req, res) => {
                 path: 'recipes',
                 match: { isDeleted: false },
                 populate: {
-                    path: 'ingredients.ingredientId'
+                    path: 'ingredients.ingredientId',
+                    populate: { 
+                        path: 'salePercent', 
+                        options: { strictPopulate: false } 
+                    }
                 }
             })
             .populate('category')
@@ -175,8 +181,7 @@ export const getMenuDetail = async (req, res) => {
             return res.status(404).json({ message: "Menu not found or has been deleted" });
         }
 
-        let totalPriceAll = 0;
-        let totalPriceInDB = 0;
+        const globalIngredientsMap = {};
 
         if (menu.recipes) {
             menu.recipes.forEach(recipe => {
@@ -184,30 +189,61 @@ export const getMenuDetail = async (req, res) => {
                     recipe.ingredients.forEach(ing => {
                         const detail = ing.ingredientId;
                         if (detail) {
+                            const pId = ing.itemType === 'Product' ? detail._id : detail.productId;
                             const finalName = detail.customName || detail.name;
-                            const finalPrice = detail.price || 0;
-                            const finalImage = detail.image || '';
-                            const finalUnit = detail.unit || '';
+                            
+                            const originalPrice = detail.price || 0;
+                            let discountedPrice = originalPrice;
+
+                            if (detail.salePercent && typeof detail.salePercent === 'object') {
+                                const { percent, startDate, endDate } = detail.salePercent;
+                                const now = new Date();
+                                
+                                if (percent && startDate && endDate) {
+                                    if (now >= new Date(startDate) && now <= new Date(endDate)) {
+                                        discountedPrice = Math.round(originalPrice * (100 - percent) / 100);
+                                    }
+                                }
+                            }
 
                             ing.ingredientId = {
                                 ...detail,
                                 displayName: finalName,
-                                price: finalPrice,
-                                image: finalImage,
-                                unit: finalUnit
+                                originalPrice: originalPrice,
+                                price: discountedPrice,      
+                                image: detail.image || '',
+                                unit: detail.unit || ''
                             };
 
-                            const lineTotal = finalPrice * (ing.quantity || 0);
-                            totalPriceAll += lineTotal;
-
-                            if (ing.itemType === 'Product' || detail.productId) {
-                                totalPriceInDB += lineTotal;
+                            if (pId) {
+                                const qty = Number(ing.quantity) || 0;
+                                if (!globalIngredientsMap[pId]) {
+                                    globalIngredientsMap[pId] = {
+                                        price: discountedPrice,
+                                        totalQty: 0,
+                                        isProduct: ing.itemType === 'Product' || !!detail.productId
+                                    };
+                                }
+                                globalIngredientsMap[pId].totalQty += qty;
                             }
                         }
                     });
                 }
             });
         }
+
+        let totalPriceAll = 0;
+        let totalPriceInDB = 0;
+
+        Object.values(globalIngredientsMap).forEach(item => {
+            const purchaseQty = Math.ceil(item.totalQty);
+            const lineTotal = item.price * purchaseQty;
+
+            totalPriceAll += lineTotal;
+            if (item.isProduct) {
+                totalPriceInDB += lineTotal;
+            }
+        });
 
         return res.status(200).json({
             code: 200,
