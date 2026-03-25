@@ -24,3 +24,6 @@ jobs:
           push: true
           # Thay 'username' bằng tên tài khoản Docker Hub của bạn
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/fresh-food-backend:latest
+      - name: Trigger Render Deploy
+        run: |
+          curl -X GET "${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
