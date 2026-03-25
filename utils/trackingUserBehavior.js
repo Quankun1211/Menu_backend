@@ -42,7 +42,12 @@ export const trackBehavior = (action, targetType) => {
 const userLastActionCache = new Map();
 
 export const triggerAIUpdate = async (userId, targetId = "general") => {
-    if (!userId) return;
+    const cleanTargetId = (!targetId || targetId === "undefined") ? "general" : targetId;
+
+    if (!userId || userId === "undefined") {
+        console.warn("[AI] Bỏ qua trigger: userId không hợp lệ.");
+        return;
+    }
 
     const now = Date.now();
     const COOLDOWN_TIME = 30 * 1000; 
@@ -50,27 +55,29 @@ export const triggerAIUpdate = async (userId, targetId = "general") => {
     const userHistory = userLastActionCache.get(userId);
 
     if (userHistory) {
-        if (userHistory.lastTargetId !== targetId) {
-            console.log(`[AI] Phát hiện đổi sản phẩm: ${userHistory.lastTargetId} -> ${targetId}. RESET COOLDOWN.`);
+        if (userHistory.lastTargetId !== cleanTargetId) {
+            console.log(`[AI] Đổi sản phẩm: ${userHistory.lastTargetId} -> ${cleanTargetId}. RESET COOLDOWN.`);
         } 
         else if (now - userHistory.lastTimestamp < COOLDOWN_TIME) {
-            console.log(`[AI] Cooldown ACTIVE cho cùng sản phẩm ${targetId}. Bỏ qua.`);
             return;
         }
     }
 
     const url = `https://mc-prod.onrender.com/recommend/${userId}`;
+    
     try {
         userLastActionCache.set(userId, {
-            lastTargetId: targetId,
+            lastTargetId: cleanTargetId,
             lastTimestamp: now
         });
 
         axios.get(url)
-            .then(res => console.log(`[AI] Cập nhật thành công cho User: ${userId} với context: ${targetId}`))
+            .then(res => {
+                console.log(`[AI] Update thành công User: ${userId} | Context: ${cleanTargetId}`);
+            })
             .catch(err => {
                 userLastActionCache.delete(userId);
-                console.error(`[AI] Lỗi kết nối: ${err.message}`);
+                console.error(`[AI] Lỗi kết nối Render: ${err.message}`);
             });
 
     } catch (e) {
