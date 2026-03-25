@@ -59,8 +59,7 @@ export const triggerAIUpdate = async (userId, targetId = "general") => {
         }
     }
 
-    const url = `http://localhost:8000/recommend/${userId}`;
-
+    const url = `https://mc-prod.onrender.com/recommend/${userId}`;
     try {
         userLastActionCache.set(userId, {
             lastTargetId: targetId,
