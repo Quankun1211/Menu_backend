@@ -1,24 +1,36 @@
 import nodemailer from 'nodemailer';
 
-export const sendOTPEmail = async (email, otp) => {
-    const transporter = nodemailer.createTransport({
-        host: 'smtp.gmail.com',
-        port: 465, 
-        secure: true, 
-        pool: true,  
-        auth: {
-            user: process.env.EMAIL_USER,
-            pass: "wnzdvelfwzahshku",
-        },
-        connectionTimeout: 10000,
-        greetingTimeout: 10000,  
-        socketTimeout: 15000,    
-    });
-    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-        throw new Error("Chưa cấu hình EMAIL_USER hoặc EMAIL_PASS trong .env");
+const transporter = nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 465, 
+    secure: true, 
+    pool: true,  
+    maxConnections: 5,
+    maxMessages: 100,
+    auth: {
+        user: process.env.EMAIL_USER,
+        pass: "wnzdvelfwzahshku", 
+    },
+    connectionTimeout: 20000, 
+    greetingTimeout: 20000,
+    socketTimeout: 30000,
+});
+
+transporter.verify((error, success) => {
+    if (error) {
+        console.error("❌ Lỗi kết nối Email (SMTP):", error);
+    } else {
+        console.log("✅ Server đã sẵn sàng gửi OTP");
     }
+});
+
+export const sendOTPEmail = async (email, otp) => {
+    if (!process.env.EMAIL_USER) {
+        throw new Error("Chưa cấu hình EMAIL_USER trong .env");
+    }
+
     const mailOptions = {
-        from: `"App Hỗ Trợ" <${process.env.EMAIL_USER}>`,
+        from: `"Bếp Việt" <${process.env.EMAIL_USER}>`,
         to: email,
         subject: "Mã xác thực tài khoản (OTP)",
         html: `
@@ -32,5 +44,6 @@ export const sendOTPEmail = async (email, otp) => {
             </div>
         `,
     };
+
     return transporter.sendMail(mailOptions);
 };
