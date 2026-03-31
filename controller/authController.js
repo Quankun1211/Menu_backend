@@ -54,6 +54,7 @@ export const signUp = async (req, res) => {
     });
 
     try {
+      console.log("Sending OTP email to:", email, " ",otp);
       await sendOTPEmail(email, otp);
     } catch (mailError) {
       console.error("Gửi mail thất bại:", mailError);
