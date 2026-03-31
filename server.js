@@ -42,6 +42,8 @@ const __dirname = path.resolve()
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost',
+  'http://localhost:5000',
+  'http://localhost:3000',
   process.env.FRONTEND_URL,
   'https://fanciful-dieffenbachia-2f571b.netlify.app', 
   'https://warm-chaja-2bce2f.netlify.app', 

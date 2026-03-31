@@ -17,7 +17,7 @@ const generateRandomAvatar = (username) => {
 export const signUp = async (req, res) => {
   try {
     const { name, username, email, password, confirmPassword } = req.body;
-
+  
     if (!name || !username || !email || !password || !confirmPassword) {
       return res.status(400).json({ error: "Thiếu thông tin bắt buộc" });
     }
@@ -53,12 +53,7 @@ export const signUp = async (req, res) => {
       otpExpires
     });
 
-    try {
-      console.log("Sending OTP email to:", email, " ",otp);
-      await sendOTPEmail(email, otp);
-    } catch (mailError) {
-      console.error("Gửi mail thất bại:", mailError);
-    }
+    sendOTPEmail(email, otp).catch(err => console.error("Gửi mail ngầm thất bại:", err));
 
     await Notification.create({
       userId: newUser._id,
