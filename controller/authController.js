@@ -125,13 +125,21 @@ export const resendOTP = async (req, res) => {
         
         user.otp = newOtp;
         user.otpExpires = new Date(Date.now() + 10 * 60 * 1000);
+        
         await user.save();
 
-        await sendOTPEmail(email, newOtp);
+        sendOTPEmail(email, newOtp).catch(err => 
+            console.error(`[Mail Error] Gửi lại OTP cho ${email} thất bại:`, err)
+        );
         
-        res.status(200).json({ message: "Mã OTP mới đã được gửi vào email." });
+        return res.status(200).json({ 
+            code: 200,
+            message: "Mã OTP mới đang được gửi. Vui lòng kiểm tra hộp thư của bạn." 
+        });
+
     } catch (error) {
-        res.status(500).json({ message: error.message });
+        console.error("Resend OTP error:", error);
+        return res.status(500).json({ message: "Lỗi hệ thống khi gửi lại mã." });
     }
 };
 
