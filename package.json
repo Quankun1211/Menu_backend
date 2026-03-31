@@ -13,6 +13,7 @@
   "description": "",
   "dependencies": {
     "@apollo/server": "^5.2.0",
+    "@emailjs/nodejs": "^5.0.2",
     "@google/generative-ai": "^0.24.1",
     "axios": "^1.13.2",
     "bcryptjs": "^3.0.3",
@@ -34,6 +35,7 @@
     "openai": "^6.19.0",
     "path": "^0.12.7",
     "qs": "^6.14.1",
+    "resend": "^6.10.0",
     "slugify": "^1.6.6",
     "socket.io": "^4.8.3"
   },

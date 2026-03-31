@@ -1,49 +1,29 @@
-import nodemailer from 'nodemailer';
-
-const transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 465, 
-    secure: true, 
-    pool: true,  
-    maxConnections: 5,
-    maxMessages: 100,
-    auth: {
-        user: process.env.EMAIL_USER,
-        pass: "wnzdvelfwzahshku", 
-    },
-    connectionTimeout: 20000, 
-    greetingTimeout: 20000,
-    socketTimeout: 30000,
-});
-
-transporter.verify((error, success) => {
-    if (error) {
-        console.error("❌ Lỗi kết nối Email (SMTP):", error);
-    } else {
-        console.log("✅ Server đã sẵn sàng gửi OTP");
-    }
-});
+import emailjs from '@emailjs/nodejs';
 
 export const sendOTPEmail = async (email, otp) => {
-    if (!process.env.EMAIL_USER) {
-        throw new Error("Chưa cấu hình EMAIL_USER trong .env");
-    }
+    const now = new Date();
+    now.setMinutes(now.getMinutes() + 15);
+    const timeString = now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
 
-    const mailOptions = {
-        from: `"Bếp Việt" <${process.env.EMAIL_USER}>`,
-        to: email,
-        subject: "Mã xác thực tài khoản (OTP)",
-        html: `
-            <div style="font-family: Arial, sans-serif; max-width: 400px; margin: 0 auto; border: 1px solid #eee; padding: 20px; border-radius: 10px;">
-                <h2 style="color: #4CAF50; text-align: center;">Xác thực Email</h2>
-                <p>Chào bạn, mã OTP của bạn để kích hoạt tài khoản là:</p>
-                <div style="background: #f9f9f9; padding: 15px; text-align: center; font-size: 24px; font-weight: bold; color: #333; letter-spacing: 5px;">
-                    ${otp}
-                </div>
-                <p style="font-size: 12px; color: #777; margin-top: 20px;">Mã này có hiệu lực trong 10 phút. Nếu không phải bạn yêu cầu, vui lòng bỏ qua email này.</p>
-            </div>
-        `,
+    const templateParams = {
+        otp_code: otp,           // Khớp với {{otp_code}}
+        expiry_time: timeString, // Khớp với {{expiry_time}}
+        email: email,         // Sử dụng biến này trong ô "To Email" của EmailJS Settings
+        user_name: email.split('@')[0] // Tùy chọn nếu muốn hiện tên user
     };
 
-    return transporter.sendMail(mailOptions);
+    try {
+        await emailjs.send(
+            process.env.EMAILJS_SERVICE_ID,
+            process.env.EMAILJS_TEMPLATE_ID,
+            templateParams,
+            {
+                publicKey: process.env.EMAILJS_PUBLIC_KEY,
+                privateKey: process.env.EMAILJS_PRIVATE_KEY,
+            }
+        );
+        console.log("✅ OTP đã gửi thành công tới:", email);
+    } catch (error) {
+        console.error("❌ Lỗi gửi OTP qua EmailJS:", error);
+    }
 };
