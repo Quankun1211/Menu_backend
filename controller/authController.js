@@ -4,6 +4,7 @@ import generateTokenAndSetCookie from "../utils/generateToken.js";
 import {sendOTPEmail} from "../utils/mailer.js"
 import { triggerAIUpdate } from "../utils/trackingUserBehavior.js";
 import { Notification } from "../models/notification/notificationSchema.js"
+import { redisClient } from "../config/redis.js";
 const generateRandomAvatar = (username) => {
   const params = [
     'backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf', 
@@ -31,16 +32,14 @@ export const signUp = async (req, res) => {
     });
 
     if (existedUser) {
-      return res.status(400).json({
-        error: "Username hoặc Email đã tồn tại",
-      });
+      return res.status(400).json({ error: "Username hoặc Email đã tồn tại" });
     }
 
     const salt = await bcryptjs.genSalt(10);
     const hashedPassword = await bcryptjs.hash(password, salt);
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
+    await redisClient.set(`otp:${email}`, otp, { EX: 600 });
 
     const newUser = await User.create({
       name,
@@ -56,7 +55,7 @@ export const signUp = async (req, res) => {
     await Notification.create({
       userId: newUser._id,
       title: "Chào mừng bạn mới!",
-      body: `Chào mừng ${name} tới với Bếp Việt. Chúc bạn có những trải nghiệm tuyệt vời!`,
+      body: `Chào mừng ${name} tới với Bếp Việt.`,
       type: 'SYSTEM_UPDATE',
       isRead: false
     });
@@ -64,10 +63,7 @@ export const signUp = async (req, res) => {
     return res.status(201).json({
       code: 201,
       message: "Đăng ký thành công. Vui lòng kiểm tra email để nhận mã OTP.",
-      data: {
-        email: newUser.email,
-        username: newUser.username,
-      },
+      data: { email: newUser.email, username: newUser.username },
     });
   } catch (err) {
     console.error("Signup error:", err);
@@ -78,35 +74,37 @@ export const signUp = async (req, res) => {
 export const verifyOTP = async (req, res) => {
     try {
         const { email, otp, type } = req.body;
-        const user = await User.findOne({ email });
 
+        const storedOtp = await redisClient.get(`otp:${email}`);
+
+        if (!storedOtp) {
+            return res.status(400).json({ message: "Mã OTP đã hết hạn" });
+        }
+
+        if (String(storedOtp) !== String(otp)) {
+            return res.status(400).json({ message: "Mã OTP không chính xác" });
+        }
+
+        const user = await User.findOne({ email });
         if (!user) {
             return res.status(404).json({ message: "Người dùng không tồn tại" });
         }
 
-        if (String(user.otp) !== String(otp) || user.otpExpires < Date.now()) {
-            return res.status(400).json({ message: "Mã OTP không hợp lệ hoặc đã hết hạn" });
-        }
-
         if (!user.isVerified) {
             user.isVerified = true;
+            await user.save();
         }
 
-        const isResetFlow = type === 'reset'; 
-        
-        if (!isResetFlow) {
-            user.otp = undefined;
-            user.otpExpires = undefined;
+        if (type !== 'reset') {
+            await redisClient.del(`otp:${email}`);
         }
 
-        await user.save();
-
-        res.status(200).json({ 
+        return res.status(200).json({ 
             message: "Xác thực thành công!",
             data: { email: user.email } 
         });
     } catch (error) {
-        res.status(500).json({ message: error.message });
+        return res.status(500).json({ message: error.message });
     }
 };
 
@@ -121,10 +119,7 @@ export const resendOTP = async (req, res) => {
 
         const newOtp = Math.floor(100000 + Math.random() * 900000).toString();
         
-        user.otp = newOtp;
-        user.otpExpires = new Date(Date.now() + 10 * 60 * 1000);
-        
-        await user.save();
+        await redisClient.set(`otp:${email}`, newOtp, { EX: 600 });
 
         sendOTPEmail(email, newOtp).catch(err => 
             console.error(`[Mail Error] Gửi lại OTP cho ${email} thất bại:`, err)
@@ -144,48 +139,48 @@ export const resendOTP = async (req, res) => {
 export const forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
+    
     const user = await User.findOne({ email });
-
-    if (!user) return res.status(404).json({ error: "Email không tồn tại trong hệ thống" });
+    if (!user) {
+      return res.status(404).json({ error: "Email không tồn tại trong hệ thống" });
+    }
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    console.log(otp);
-    user.otp = otp;
-    user.otpExpires = new Date(Date.now() + 10 * 60 * 1000);
-    await user.save();
+    
+    await redisClient.set(`otp:reset:${email}`, otp, { EX: 600 });
 
     await sendOTPEmail(email, otp); 
 
-    return res.status(200).json({ message: "Mã OTP đặt lại mật khẩu đã được gửi" });
+    return res.status(200).json({ 
+      message: "Mã OTP đặt lại mật khẩu đã được gửi. Vui lòng kiểm tra email." 
+    });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error("Forgot password error:", err.message);
+    return res.status(500).json({ error: "Lỗi hệ thống khi yêu cầu đặt lại mật khẩu" });
   }
 };
 
 export const resetPassword = async (req, res) => {
   try {
     const { email, otp, newPassword } = req.body;
-console.log(email);
 
     if (!email || !otp || !newPassword) {
       return res.status(400).json({ error: "Vui lòng cung cấp đầy đủ email, mã OTP và mật khẩu mới" });
     }
 
-    const user = await User.findOne({ email });
+    const storedOtp = await redisClient.get(`otp:reset:${email}`);
 
-    if (!user) {
-      return res.status(404).json({ error: "Người dùng không tồn tại" });
+    if (!storedOtp) {
+      return res.status(400).json({ error: "Mã OTP đã hết hạn hoặc không tồn tại" });
     }
-    console.log("User otp: ",user.otp);
-    console.log("Otp: ", otp);
-    
 
-    if (String(user.otp) !== String(otp)) {
+    if (String(storedOtp) !== String(otp)) {
       return res.status(400).json({ error: "Mã OTP không chính xác" });
     }
 
-    if (user.otpExpires < Date.now()) {
-      return res.status(400).json({ error: "Mã OTP đã hết hạn" });
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ error: "Người dùng không tồn tại" });
     }
 
     if (newPassword.length < 6) {
@@ -196,14 +191,14 @@ console.log(email);
     const hashedPassword = await bcryptjs.hash(newPassword, salt);
 
     user.password = hashedPassword;
-    user.otp = undefined;
-    user.otpExpires = undefined;
     
     await user.save();
 
+    await redisClient.del(`otp:reset:${email}`);
+
     return res.status(200).json({ message: "Mật khẩu đã được cập nhật thành công" });
   } catch (err) {
-    console.error("Lỗi reset password:", err);
+    console.error("Lỗi reset password:", err.message);
     return res.status(500).json({ error: "Lỗi hệ thống, vui lòng thử lại sau" });
   }
 };
