@@ -1,7 +1,7 @@
 import slugify from "slugify"
 import {Category} from "../models/categoriesModel.js"
 import cloudinary from "../config/cloudinary.js"
-
+import { getOrSetCache } from "../utils/redis.utils.js";
 export const createCategories = async (req, res) => {
   try {
     const { name } = req.body;
@@ -42,21 +42,27 @@ export const createCategories = async (req, res) => {
 };
 
 export const getCategories = async (req, res) => {
-  try {
-    const limit = Number(req.query.limit);
+    try {
+        const limit = Number(req.query.limit);
+        
+        const cacheKey = `categories:product:limit:${Number.isInteger(limit) ? limit : 'all'}`;
 
-    const categories = await Category.find()
-      .sort({ createdAt: -1 })
-      .limit(Number.isInteger(limit) ? limit : 0);
+        const categories = await getOrSetCache(cacheKey, async () => {
+            return await Category.find()
+                .sort({ createdAt: -1 })
+                .limit(Number.isInteger(limit) ? limit : 0)
+                .lean(); 
+        });
 
-    return res.status(200).json({
-      code: 200,
-      data: categories,
-    });
-  } catch (error) {
-    console.error("Get categories error:", error.message);
-    return res.status(500).json({ error: "Internal server" });
-  }
+
+        return res.status(200).json({
+            code: 200,
+            data: categories,
+        });
+    } catch (error) {
+        console.error("Get categories error:", error.message);
+        return res.status(500).json({ error: "Internal server" });
+    }
 };
 /*
 696af02fac884f3578d9ac97

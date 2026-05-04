@@ -5,6 +5,7 @@ import cloudinary from "../../config/cloudinary.js";
 import mongoose from "mongoose";
 import { Product } from "../../models/productsModel.js";
 import { SaleItem } from "../../models/saleItemModel.js";
+import { getOrSetCache } from "../../utils/redis.utils.js";
 export const createMenu = async (req, res) => {
   try {
     let { 
@@ -92,55 +93,60 @@ export const createMenu = async (req, res) => {
 export const getMenus = async (req, res) => {
     try {
         const { categoryId } = req.query;
-        let filter = { isDeleted: false }; 
+        
+        const cacheKey = `menus:list:${categoryId || 'all'}`;
 
-        if (categoryId && categoryId !== 'all' && categoryId !== 'undefined') {
-            if (!mongoose.Types.ObjectId.isValid(categoryId)) {
-                return res.status(400).json({ message: "Định dạng Category ID không hợp lệ" });
-            }
-            filter.category = new mongoose.Types.ObjectId(categoryId);
-        }
+        const updatedMenus = await getOrSetCache(cacheKey, async () => {
+            let filter = { isDeleted: false };
 
-        const menus = await Menu.find(filter)
-            .populate({
-                path: 'recipes',
-                match: { isDeleted: false }, 
-                populate: {
-                    path: 'ingredients.ingredientId'
+            if (categoryId && categoryId !== 'all' && categoryId !== 'undefined') {
+                if (!mongoose.Types.ObjectId.isValid(categoryId)) {
+                    throw new Error("INVALID_ID");
                 }
-            })
-            .populate('category')
-            .sort({ createdAt: -1 })
-            .lean();
-
-        const updatedMenus = menus.map(menu => {
-            let totalPriceAll = 0;
-            let totalPriceInDB = 0;
-
-            if (menu.recipes && menu.recipes.length > 0) {
-                menu.recipes.forEach(recipe => {
-                    if (recipe && recipe.ingredients && recipe.ingredients.length > 0) {
-                        recipe.ingredients.forEach(recipeIng => {
-                            const details = recipeIng.ingredientId;
-                            if (details && details.price) {
-                                const useQuantity = recipeIng.quantity || 0;
-                                const lineTotal = details.price * useQuantity;
-                                totalPriceAll += lineTotal;
-
-                                if (recipeIng.itemType === 'Product' || details.productId) {
-                                    totalPriceInDB += lineTotal;
-                                }
-                            }
-                        });
-                    }
-                });
+                filter.category = new mongoose.Types.ObjectId(categoryId);
             }
 
-            return {
-                ...menu,
-                totalPrice: Math.round(totalPriceAll),
-                totalPriceInDB: Math.round(totalPriceInDB)
-            };
+            const menus = await Menu.find(filter)
+                .populate({
+                    path: 'recipes',
+                    match: { isDeleted: false },
+                    populate: {
+                        path: 'ingredients.ingredientId'
+                    }
+                })
+                .populate('category')
+                .sort({ createdAt: -1 })
+                .lean();
+
+            return menus.map(menu => {
+                let totalPriceAll = 0;
+                let totalPriceInDB = 0;
+
+                if (menu.recipes?.length > 0) {
+                    menu.recipes.forEach(recipe => {
+                        if (recipe?.ingredients?.length > 0) {
+                            recipe.ingredients.forEach(recipeIng => {
+                                const details = recipeIng.ingredientId;
+                                if (details?.price) {
+                                    const useQuantity = recipeIng.quantity || 0;
+                                    const lineTotal = details.price * useQuantity;
+                                    totalPriceAll += lineTotal;
+
+                                    if (recipeIng.itemType === 'Product' || details.productId) {
+                                        totalPriceInDB += lineTotal;
+                                    }
+                                }
+                            });
+                        }
+                    });
+                }
+
+                return {
+                    ...menu,
+                    totalPrice: Math.round(totalPriceAll),
+                    totalPriceInDB: Math.round(totalPriceInDB)
+                };
+            });
         });
 
         return res.status(200).json({
@@ -149,6 +155,9 @@ export const getMenus = async (req, res) => {
             data: updatedMenus,
         });
     } catch (error) {
+        if (error.message === "INVALID_ID") {
+            return res.status(400).json({ message: "Định dạng Category ID không hợp lệ" });
+        }
         console.error("Get menus error:", error.message);
         return res.status(500).json({ error: "Lỗi máy chủ nội bộ" });
     }

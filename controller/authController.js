@@ -49,8 +49,6 @@ export const signUp = async (req, res) => {
       password: hashedPassword,
       avatar: generateRandomAvatar(username),
       isVerified: false,
-      otp,
-      otpExpires
     });
 
     sendOTPEmail(email, otp).catch(err => console.error("Gửi mail ngầm thất bại:", err));

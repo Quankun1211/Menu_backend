@@ -11,6 +11,7 @@ import { Recipe } from "../models/menuModels/RecipeModel.js";
 import axios from "axios";
 import { triggerAIUpdate } from "../utils/trackingUserBehavior.js";
 
+import { getOrSetCache } from "../utils/redis.utils.js";
 export const createProduct = async (req, res) => {
   try {
     const data = req.body;
@@ -209,40 +210,45 @@ export const createSpecialtyProduct = async (req, res) => {
 };
 export const getPopularProducts = async (req, res) => {
   try {
-    const limit = Number(req.query.limit) || 10
-    const region = req.query.region
+    const limit = Number(req.query.limit) || 10;
+    const region = req.query.region;
 
-    const filter = {
-      isActive: true,
-      isSpecialty: false
-    }
+    const cacheKey = `products:popular:${region || 'all'}:limit:${limit}`;
 
-    if (region) {
-      filter.region = region
-    }
+    // 2. Sử dụng getOrSetCache
+    const products = await getOrSetCache(cacheKey, async () => {
+      const filter = {
+        isActive: true,
+        isSpecialty: false
+      };
 
-    const products = await Product.find(filter)
-      .populate({
-        path: "categoryId",
-        select: "name slug" 
-      })
-      .sort({
-        soldCount: -1,
-        favouriteCount: -1,
-        viewCount: -1
-      })
-      .limit(limit)
-      .lean() 
+      if (region) {
+        filter.region = region;
+      }
+
+      return await Product.find(filter)
+        .populate({
+          path: "categoryId",
+          select: "name slug"
+        })
+        .sort({
+          soldCount: -1,
+          favouriteCount: -1,
+          viewCount: -1
+        })
+        .limit(limit)
+        .lean();
+    }, 3600); 
 
     return res.status(200).json({
       code: 200,
       data: products
-    })
+    });
   } catch (error) {
-    console.error("Get popular products error:", error.message)
-    return res.status(500).json({ error: "Internal server" })
+    console.error("Get popular products error:", error.message);
+    return res.status(500).json({ error: "Internal server" });
   }
-}
+};
 
 export const createSaleItem = async (req, res) => {
   try {
@@ -274,43 +280,53 @@ export const createSaleItem = async (req, res) => {
 
 export const getShockDeals = async (req, res) => {
   try {
-    const now = new Date();
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 12;
     const skip = (page - 1) * limit;
-    const pageSize = parseInt(limit);
 
-    const products = await Product.find({
-      salePercent: { $ne: null },
-      isActive: true,
-      isSpecialty: false
-    })
-      .populate({
-        path: "salePercent",
-        match: {
-          startDate: { $lte: now },
-          endDate: { $gte: now },
-        },
-        select: "percent startDate endDate",
+    const cacheKey = `products:shock-deals:p:${page}:l:${limit}`;
+
+    const result = await getOrSetCache(cacheKey, async () => {
+      const now = new Date();
+
+      const products = await Product.find({
+        salePercent: { $ne: null },
+        isActive: true,
+        isSpecialty: false
       })
-      .populate("categoryId", "name slug")
-      .sort({ soldCount: -1 })
-      .lean();
+        .populate({
+          path: "salePercent",
+          match: {
+            startDate: { $lte: now },
+            endDate: { $gte: now },
+          },
+          select: "percent startDate endDate",
+        })
+        .populate("categoryId", "name slug")
+        .sort({ soldCount: -1 })
+        .lean();
 
-    const validProducts = products.filter(p => p.salePercent);
-    
-    const totalItems = validProducts.length;
-    const paginatedProducts = validProducts.slice(skip, skip + limit);
+      const validProducts = products.filter(p => p.salePercent);
+      
+      const totalItems = validProducts.length;
+      const paginatedProducts = validProducts.slice(skip, skip + limit);
+
+      return {
+        data: paginatedProducts,
+        totalItems,
+        totalPages: Math.ceil(totalItems / limit)
+      };
+    }, 1800); 
 
     return res.status(200).json({
       code: 200,
-      data: paginatedProducts,
+      data: result.data,
       pagination: {
-        totalItems,
-        totalPages: Math.ceil(totalItems / limit),
-        currentPage: parseInt(page),
-        pageSize,
-        hasNextPage: skip + products.length < totalItems
+        totalItems: result.totalItems,
+        totalPages: result.totalPages,
+        currentPage: page,
+        pageSize: limit,
+        hasNextPage: skip + result.data.length < result.totalItems
       }
     });
   } catch (error) {
@@ -413,133 +429,134 @@ export const trackView = async (req, res) => {
 export const getSuggestedProducts = async (req, res) => {
   try {
     const { page = 1, limit = 10, sort = "newest" } = req.query;
-    const now = new Date();
-    const skip = (parseInt(page) - 1) * parseInt(limit);
     const userId = req.user?._id || req.user?.id;
+    console.log("User ID:", userId);
+    
     const pageSize = parseInt(limit);
+    const skip = (parseInt(page) - 1) * pageSize;
 
-    let suggestedIds = [];
+    const cacheKey = `products:suggested:${userId || 'guest'}:p:${page}:l:${limit}:s:${sort}`;
 
-    if (userId) {
-      try {
-        const aiUrl = `http://127.0.0.1:8000/recommend/${userId}`;
-        const aiResponse = await axios.get(aiUrl, { timeout: 3000 }).catch(() => null);
+    const result = await getOrSetCache(cacheKey, async () => {
+      const now = new Date();
+      let suggestedIds = [];
+      
+      if (userId) {
+        try {
 
-        if (aiResponse?.data) {
-            console.log(`[AI_LOG] User: ${userId}`);
-            console.log(`[AI_LOG] IDs nhận được: ${JSON.stringify(aiResponse.data.data?.map(p => p._id) || aiResponse.data.recommendations)}`);
-        } else {
-            console.log(`[AI_LOG] ⚠️ Không nhận được phản hồi từ AI, dùng fallback Category.`);
+          const aiUrl = `https://mc-prod.onrender.com/recommend/${userId}`;
+          const aiResponse = await axios.get(aiUrl, { timeout: 5000 }) // Tăng lên 5s cho chắc
+            .catch((err) => {
+              console.error(`[AXIOS_ERROR] URL: ${aiUrl} | Message: ${err.message}`);
+              return null;
+            });
+
+          if (aiResponse?.data) {
+            const rawData = aiResponse.data.data || aiResponse.data.recommendations || [];
+            suggestedIds = rawData.map(item => (item._id || item).toString());
+          }
+          
+        } catch (err) {
+          console.error("[AI_ERROR] Fallback to history:", err.message);
         }
-        if (aiResponse?.data?.data) {
-          suggestedIds = aiResponse.data.data.map(p => p._id.toString());
-        } else if (aiResponse?.data?.recommendations) {
-          suggestedIds = aiResponse.data.recommendations.map(id => id.toString());
+      }
+
+      let categoryIds = [];
+      if (suggestedIds.length === 0 && userId) {
+        const user = await User.findById(userId).select("viewHistory").lean();
+        if (user?.viewHistory?.length > 0) {
+          categoryIds = user.viewHistory.slice(0, 5).map(item => item.categoryId.toString());
         }
-      } catch (err) {
-        console.error("AI Suggestion Fetch Error:", err.message);
       }
-    }
 
-    let categoryIds = [];
-    if (suggestedIds.length === 0 && userId) {
-      const user = await User.findById(userId).select("viewHistory").lean();
-      if (user?.viewHistory) {
-        categoryIds = user.viewHistory.slice(0, 5).map(item => item.categoryId.toString());
+      const match = { isActive: true, isSpecialty: false };
+      if (suggestedIds.length > 0) {
+        match._id = { $in: suggestedIds.map(id => new mongoose.Types.ObjectId(id)) };
+      } else if (categoryIds.length > 0) {
+        match.categoryId = { $in: categoryIds.map(id => new mongoose.Types.ObjectId(id)) };
       }
-    }
 
-    const match = { isActive: true, isSpecialty: false };
+      const sortMap = {
+        newest: { createdAt: -1 },
+        price_asc: { finalPrice: 1 },
+        price_desc: { finalPrice: -1 },
+        sold_desc: { soldCount: -1 }
+      };
 
-    if (suggestedIds.length > 0) {
-      match._id = { $in: suggestedIds.map(id => new mongoose.Types.ObjectId(id)) };
-    } else if (categoryIds.length > 0) {
-      match.categoryId = { $in: categoryIds.map(id => new mongoose.Types.ObjectId(id)) };
-    }
+      const aiIdObjects = suggestedIds.map(id => new mongoose.Types.ObjectId(id));
 
-    const sortMap = {
-      newest: { createdAt: -1 },
-      price_asc: { finalPrice: 1 },
-      price_desc: { finalPrice: -1 },
-      sold_desc: { soldCount: -1 }
-    };
-
-    const aiIdObjects = suggestedIds.map(id => new mongoose.Types.ObjectId(id));
-
-    const results = await Product.aggregate([
-      { $match: match },
-      {
-        $lookup: {
-          from: "saleitems",
-          localField: "salePercent",
-          foreignField: "_id",
-          as: "sale",
-        },
-      },
-      { $unwind: { path: "$sale", preserveNullAndEmptyArrays: true } },
-      {
-        $addFields: {
-          aiOrder: { $indexOfArray: [aiIdObjects, "$_id"] },
-          isPromotion: {
-            $cond: [
-              {
-                $and: [
-                  { $ifNull: ["$sale.percent", false] },
-                  { $lte: ["$sale.startDate", now] },
-                  { $gte: ["$sale.endDate", now] },
-                ],
-              },
-              1, 0,
-            ],
-          },
-          salePercent: {
-            $cond: [
-              { $eq: ["$isPromotion", 1] },
-              {
-                percent: "$sale.percent",
-                startDate: "$sale.startDate",
-                endDate: "$sale.endDate",
-              },
-              null,
-            ],
-          },
-          finalPrice: {
-            $cond: [
-              { $eq: ["$isPromotion", 1] },
-              { $multiply: ["$price", { $divide: [{ $subtract: [100, "$sale.percent"] }, 100] }] },
-              "$price",
-            ],
+      return await Product.aggregate([
+        { $match: match },
+        {
+          $lookup: {
+            from: "saleitems",
+            localField: "salePercent",
+            foreignField: "_id",
+            as: "sale",
           },
         },
-      },
-      { 
-        $sort: suggestedIds.length > 0 
-          ? { aiOrder: 1 } 
-          : (sortMap[sort] || sortMap.sold_desc) 
-      },
-      {
-        $facet: {
-          metadata: [{ $count: "total" }],
-          data: [
-            { $skip: skip },
-            { $limit: pageSize },
-            {
-              $lookup: {
-                from: "categories",
-                localField: "categoryId",
-                foreignField: "_id",
-                as: "categoryId",
-              },
+        { $unwind: { path: "$sale", preserveNullAndEmptyArrays: true } },
+        {
+          $addFields: {
+            // Giữ nguyên thứ tự gợi ý từ AI nếu có
+            aiOrder: { $indexOfArray: [aiIdObjects, "$_id"] },
+            isPromotion: {
+              $cond: [
+                {
+                  $and: [
+                    { $ifNull: ["$sale.percent", false] },
+                    { $lte: ["$sale.startDate", now] },
+                    { $gte: ["$sale.endDate", now] },
+                  ],
+                },
+                1, 0,
+              ],
             },
-            { $unwind: "$categoryId" },
-            { $project: { sale: 0, isPromotion: 0, aiOrder: 0 } },
-          ],
+            finalPrice: {
+              $cond: [
+                { $eq: ["$isPromotion", 1] },
+                { $multiply: ["$price", { $divide: [{ $subtract: [100, "$sale.percent"] }, 100] }] },
+                "$price",
+              ],
+            },
+            salePercent: {
+              $cond: [
+                { $eq: ["$isPromotion", 1] },
+                { percent: "$sale.percent", startDate: "$sale.startDate", endDate: "$sale.endDate" },
+                null,
+              ],
+            },
+          },
         },
-      },
-    ]);
+        { 
+          $sort: suggestedIds.length > 0 
+            ? { aiOrder: 1 } 
+            : (sortMap[sort] || sortMap.sold_desc) 
+        },
+        {
+          $facet: {
+            metadata: [{ $count: "total" }],
+            data: [
+              { $skip: skip },
+              { $limit: pageSize },
+              {
+                $lookup: {
+                  from: "categories",
+                  localField: "categoryId",
+                  foreignField: "_id",
+                  as: "categoryDoc",
+                },
+              },
+              { $unwind: "$categoryDoc" },
+              { $project: { sale: 0, isPromotion: 0, aiOrder: 0 } },
+            ],
+          },
+        },
+      ]);
+    }, 600); 
 
-    const totalItems = results[0].metadata[0]?.total || 0;
-    const products = results[0].data;
+    const totalItems = result[0].metadata[0]?.total || 0;
+    const products = result[0].data;
 
     return res.status(200).json({
       code: 200,
@@ -559,109 +576,76 @@ export const getSuggestedProducts = async (req, res) => {
   }
 };
 export const getProductsByCategory = async (req, res) => {
-  try {
-    const { categoryId, sort = "newest" } = req.query;
+    try {
+        const { categoryId, sort = "newest" } = req.query;
+        
+        const cacheKey = `products:cat:${categoryId || 'all'}:sort:${sort}`;
 
-    const match = { 
-        isActive: true, 
-        isSpecialty: false
-     };
+        const products = await getOrSetCache(cacheKey, async () => {
+            const now = new Date();
+            const match = { isActive: true, isSpecialty: false };
+            
+            if (categoryId) {
+                match.categoryId = new mongoose.Types.ObjectId(categoryId);
+            }
 
-    if (categoryId) {
-      match.categoryId = new mongoose.Types.ObjectId(categoryId);
+            return await Product.aggregate([
+                { $match: match },
+                {
+                    $lookup: {
+                        from: "saleitems",
+                        localField: "salePercent",
+                        foreignField: "_id",
+                        as: "saleInfo",
+                    },
+                },
+                { $unwind: { path: "$saleInfo", preserveNullAndEmptyArrays: true } },
+                {
+                    $addFields: {
+                        finalPrice: {
+                            $cond: {
+                                if: {
+                                    $and: [
+                                        { $ifNull: ["$saleInfo", false] },
+                                        { $lte: ["$saleInfo.startDate", now] },
+                                        { $gte: ["$saleInfo.endDate", now] },
+                                    ],
+                                },
+                                then: {
+                                    $multiply: [
+                                        "$price",
+                                        { $divide: [{ $subtract: [100, "$saleInfo.percent"] }, 100] },
+                                    ],
+                                },
+                                else: "$price",
+                            },
+                        },
+                    },
+                },
+                { 
+                    $sort: sort === "price_asc" ? { finalPrice: 1 } : 
+                           sort === "price_desc" ? { finalPrice: -1 } :
+                           sort === "sold_desc" ? { soldCount: -1 } : 
+                           { createdAt: -1 } 
+                },
+                {
+                    $lookup: {
+                        from: "categories",
+                        localField: "categoryId",
+                        foreignField: "_id",
+                        as: "categoryDetails",
+                    },
+                },
+                { $unwind: "$categoryDetails" },
+                { $project: { saleInfo: 0 } },
+            ]);
+        });
+
+        return res.status(200).json({ code: 200, data: products });
+    } catch (error) {
+        console.error("getProductsByCategory error:", error);
+        return res.status(500).json({ code: 500, message: "Internal server error" });
     }
-
-    const sortMap = {
-      newest: { createdAt: -1 },
-      price_asc: { finalPrice: 1 },
-      price_desc: { finalPrice: -1 },
-      sold_desc: { soldCount: -1 },
-    };
-
-    const products = await Product.aggregate([
-      { $match: match },
-
-      {
-        $lookup: {
-          from: "saleitems",
-          localField: "salePercent",
-          foreignField: "_id",
-          as: "sale",
-        },
-      },
-      {
-        $unwind: {
-          path: "$sale",
-          preserveNullAndEmptyArrays: true,
-        },
-      },
-
-      {
-        $addFields: {
-          salePercent: {
-            $cond: [
-              { $ifNull: ["$sale", false] },
-              {
-                percent: "$sale.percent",
-                startDate: "$sale.startDate",
-                endDate: "$sale.endDate",
-              },
-              null,
-            ],
-          },
-          finalPrice: {
-            $cond: [
-              {
-                $and: [
-                  { $ifNull: ["$sale.percent", false] },
-                  { $lte: ["$sale.startDate", new Date()] },
-                  { $gte: ["$sale.endDate", new Date()] },
-                ],
-              },
-              {
-                $multiply: [
-                  "$price",
-                  {
-                    $divide: [{ $subtract: [100, "$sale.percent"] }, 100],
-                  },
-                ],
-              },
-              "$price",
-            ],
-          },
-        },
-      },
-
-      { $sort: sortMap[sort] || sortMap.newest },
-
-      {
-        $lookup: {
-          from: "categories",
-          localField: "categoryId",
-          foreignField: "_id",
-          as: "categoryId",
-        },
-      },
-      { $unwind: "$categoryId" },
-
-      {
-        $project: {
-          sale: 0,
-        },
-      },
-    ]);
-
-    return res.status(200).json({
-      code: 200,
-      data: products,
-    });
-  } catch (error) {
-    console.error("getProductsByCategory error:", error);
-    return res.status(500).json({
-      code: 500,
-      message: "Internal server error",
-    });
-  }
 };
 export const getAllProductAdmin = async (req, res) => {
   try {
@@ -683,132 +667,116 @@ export const getAllProductAdmin = async (req, res) => {
     });
   }
 };
+
 export const getProductsByRegion = async (req, res) => {
   try {
     const { region, categoryId, sort = "newest", page = 1, limit = 10 } = req.query;
-    const now = new Date();
     
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    const pageSize = parseInt(limit);
-
     if (!["bac", "trung", "nam"].includes(region)) {
-      return res.status(400).json({
-        code: 400,
-        message: "Region must be bac | trung | nam",
-      });
+      return res.status(400).json({ code: 400, message: "Region must be bac | trung | nam" });
     }
 
-    const match = {
-      region,
-      isActive: true,
-      isSpecialty: false
-    };
+    const pageSize = parseInt(limit);
+    const skip = (parseInt(page) - 1) * pageSize;
 
-    if (categoryId) {
-      match.categoryId = new mongoose.Types.ObjectId(categoryId);
-    }
+    // 1. Tạo Cache Key chứa toàn bộ tham số lọc và phân trang
+    const cacheKey = `products:region:${region}:cat:${categoryId || 'all'}:sort:${sort}:p:${page}:l:${limit}`;
 
-    const sortMap = {
-      newest: { createdAt: -1 },
-      price_asc: { finalPrice: 1 },
-      price_desc: { finalPrice: -1 },
-      sold_desc: { soldCount: -1 },
-      sale: { isPromotion: -1, soldCount: -1 }
-    };
+    const result = await getOrSetCache(cacheKey, async () => {
+      const now = new Date();
+      const match = { region, isActive: true, isSpecialty: false };
+      
+      if (categoryId) {
+        match.categoryId = new mongoose.Types.ObjectId(categoryId);
+      }
 
-    const results = await Product.aggregate([
-      { $match: match },
-      {
-        $lookup: {
-          from: "saleitems",
-          localField: "salePercent",
-          foreignField: "_id",
-          as: "sale",
-        },
-      },
-      {
-        $unwind: {
-          path: "$sale",
-          preserveNullAndEmptyArrays: true,
-        },
-      },
-      {
-        $addFields: {
-          isPromotion: {
-            $cond: [
-              {
-                $and: [
-                  { $ifNull: ["$sale.percent", false] },
-                  { $lte: ["$sale.startDate", now] },
-                  { $gte: ["$sale.endDate", now] },
-                ],
-              },
-              1,
-              0,
-            ],
-          },
-          salePercent: {
-            $cond: [
-              { $ifNull: ["$sale", false] },
-              {
-                percent: "$sale.percent",
-                startDate: "$sale.startDate",
-                endDate: "$sale.endDate",
-              },
-              null,
-            ],
-          },
-          finalPrice: {
-            $cond: [
-              {
-                $and: [
-                  { $ifNull: ["$sale.percent", false] },
-                  { $lte: ["$sale.startDate", now] },
-                  { $gte: ["$sale.endDate", now] },
-                ],
-              },
-              {
-                $multiply: [
-                  "$price",
-                  {
-                    $divide: [{ $subtract: [100, "$sale.percent"] }, 100],
-                  },
-                ],
-              },
-              "$price",
-            ],
+      const sortMap = {
+        newest: { createdAt: -1 },
+        price_asc: { finalPrice: 1 },
+        price_desc: { finalPrice: -1 },
+        sold_desc: { soldCount: -1 },
+        sale: { isPromotion: -1, soldCount: -1 }
+      };
+
+      // Tối ưu: Tính toán filter và sort trước khi $facet để giảm tải RAM
+      return await Product.aggregate([
+        { $match: match },
+        {
+          $lookup: {
+            from: "saleitems",
+            localField: "salePercent",
+            foreignField: "_id",
+            as: "sale",
           },
         },
-      },
-      { $sort: sortMap[sort] || sortMap.newest },
-      {
-        $facet: {
-          metadata: [{ $count: "total" }],
-          data: [
-            { $skip: skip },
-            { $limit: pageSize },
-            {
-              $lookup: {
-                from: "categories",
-                localField: "categoryId",
-                foreignField: "_id",
-                as: "categoryId",
-              },
+        { $unwind: { path: "$sale", preserveNullAndEmptyArrays: true } },
+        {
+          $addFields: {
+            isPromotion: {
+              $cond: [
+                {
+                  $and: [
+                    { $ifNull: ["$sale.percent", false] },
+                    { $lte: ["$sale.startDate", now] },
+                    { $gte: ["$sale.endDate", now] },
+                  ],
+                },
+                1, 0,
+              ],
             },
-            { $unwind: "$categoryId" },
-            {
-              $project: {
-                sale: 0,
-                isPromotion: 0,
-              },
+            finalPrice: {
+              $cond: [
+                {
+                  $and: [
+                    { $ifNull: ["$sale.percent", false] },
+                    { $lte: ["$sale.startDate", now] },
+                    { $gte: ["$sale.endDate", now] },
+                  ],
+                },
+                { $multiply: ["$price", { $divide: [{ $subtract: [100, "$sale.percent"] }, 100] }] },
+                "$price",
+              ],
             },
-          ],
+            // Trả về object salePercent gọn hơn ngay tại đây
+            salePercent: {
+              $cond: [
+                { $ifNull: ["$sale", false] },
+                { percent: "$sale.percent", startDate: "$sale.startDate", endDate: "$sale.endDate" },
+                null,
+              ],
+            },
+          },
         },
-      },
-    ]);
+        { $sort: sortMap[sort] || sortMap.newest },
+        {
+          $facet: {
+            metadata: [{ $count: "total" }],
+            data: [
+              { $skip: skip },
+              { $limit: pageSize },
+              {
+                $lookup: {
+                  from: "categories",
+                  localField: "categoryId",
+                  foreignField: "_id",
+                  as: "categoryDoc",
+                },
+              },
+              { $unwind: "$categoryDoc" },
+              {
+                $project: {
+                  sale: 0,
+                  isPromotion: 0,
+                },
+              },
+            ],
+          },
+        },
+      ]);
+    });
 
-    const totalItems = results[0].metadata[0]?.total || 0;
-    const products = results[0].data;
+    const totalItems = result[0].metadata[0]?.total || 0;
+    const products = result[0].data;
 
     return res.status(200).json({
       code: 200,
@@ -823,10 +791,7 @@ export const getProductsByRegion = async (req, res) => {
     });
   } catch (error) {
     console.error("getProductsByRegion error:", error);
-    return res.status(500).json({
-      code: 500,
-      message: "Internal server error",
-    });
+    return res.status(500).json({ code: 500, message: "Internal server error" });
   }
 };
 
@@ -834,90 +799,92 @@ export const getProductsSpecialByRegion = async (req, res) => {
   try {
     const { region, sort = "newest" } = req.query;
 
-    const match = {
-      isActive: true,
-      isSpecialty: true
-    };
+    const cacheKey = `products:special:region:${region || 'all'}:sort:${sort}`;
 
-    if (region && region !== "all") {
-      if (!["bac", "trung", "nam"].includes(region)) {
-        return res.status(400).json({
-          code: 400,
-          message: "Region must be bac | trung | nam | all",
-        });
+    const products = await getOrSetCache(cacheKey, async () => {
+      const match = {
+        isActive: true,
+        isSpecialty: true
+      };
+
+      if (region && region !== "all") {
+        if (!["bac", "trung", "nam"].includes(region)) {
+          return null; 
+        }
+        match.region = region;
       }
-      match.region = region;
+
+      const sortMap = {
+        newest: { createdAt: -1 },
+        price_asc: { finalPrice: 1 },
+        price_desc: { finalPrice: -1 },
+        sold_desc: { soldCount: -1 },
+      };
+
+      const now = new Date();
+
+      return await Product.aggregate([
+        { $match: match },
+        {
+          $lookup: {
+            from: "saleitems",
+            localField: "salePercent",
+            foreignField: "_id",
+            as: "sale",
+          },
+        },
+        {
+          $unwind: {
+            path: "$sale",
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+        {
+          $addFields: {
+            salePercent: {
+              $cond: [
+                { $ifNull: ["$sale", false] },
+                {
+                  percent: "$sale.percent",
+                  startDate: "$sale.startDate",
+                  endDate: "$sale.endDate",
+                },
+                null,
+              ],
+            },
+            finalPrice: {
+              $cond: [
+                {
+                  $and: [
+                    { $ifNull: ["$sale.percent", false] },
+                    { $lte: ["$sale.startDate", now] },
+                    { $gte: ["$sale.endDate", now] },
+                  ],
+                },
+                {
+                  $multiply: [
+                    "$price",
+                    {
+                      $divide: [{ $subtract: [100, "$sale.percent"] }, 100],
+                    },
+                  ],
+                },
+                "$price",
+              ],
+            },
+          },
+        },
+        { $sort: sortMap[sort] || sortMap.newest },
+        { $project: { sale: 0 } },
+      ]);
+    }, 1800);
+
+    if (!products) {
+      return res.status(400).json({
+        code: 400,
+        message: "Region must be bac | trung | nam | all",
+      });
     }
-
-    const sortMap = {
-      newest: { createdAt: -1 },
-      price_asc: { finalPrice: 1 },
-      price_desc: { finalPrice: -1 },
-      sold_desc: { soldCount: -1 },
-    };
-
-    const products = await Product.aggregate([
-      { $match: match },
-
-      {
-        $lookup: {
-          from: "saleitems",
-          localField: "salePercent",
-          foreignField: "_id",
-          as: "sale",
-        },
-      },
-      {
-        $unwind: {
-          path: "$sale",
-          preserveNullAndEmptyArrays: true,
-        },
-      },
-
-      {
-        $addFields: {
-          salePercent: {
-            $cond: [
-              { $ifNull: ["$sale", false] },
-              {
-                percent: "$sale.percent",
-                startDate: "$sale.startDate",
-                endDate: "$sale.endDate",
-              },
-              null,
-            ],
-          },
-          finalPrice: {
-            $cond: [
-              {
-                $and: [
-                  { $ifNull: ["$sale.percent", false] },
-                  { $lte: ["$sale.startDate", new Date()] },
-                  { $gte: ["$sale.endDate", new Date()] },
-                ],
-              },
-              {
-                $multiply: [
-                  "$price",
-                  {
-                    $divide: [{ $subtract: [100, "$sale.percent"] }, 100],
-                  },
-                ],
-              },
-              "$price",
-            ],
-          },
-        },
-      },
-
-      { $sort: sortMap[sort] || sortMap.newest },
-
-      {
-        $project: {
-          sale: 0,
-        },
-      },
-    ]);
 
     return res.status(200).json({
       code: 200,
@@ -934,20 +901,24 @@ export const getProductsSpecialByRegion = async (req, res) => {
 
 export const getLatestSpecialtyProduct = async (req, res) => {
   try {
-    const now = new Date();
+    const cacheKey = "products:specialty:latest";
 
-    const specialtyProduct = await Product.findOne({
-      isSpecialty: true,
-      isActive: true,
-    })
-      .populate({
-        path: "salePercent",
-        match: { startDate: { $lte: now }, endDate: { $gte: now } },
-        select: "percent",
+    const specialtyProduct = await getOrSetCache(cacheKey, async () => {
+      const now = new Date();
+
+      return await Product.findOne({
+        isSpecialty: true,
+        isActive: true,
       })
-      .populate("categoryId", "name slug")
-      .sort({ createdAt: -1 })
-      .lean();
+        .populate({
+          path: "salePercent",
+          match: { startDate: { $lte: now }, endDate: { $gte: now } },
+          select: "percent",
+        })
+        .populate("categoryId", "name slug")
+        .sort({ createdAt: -1 })
+        .lean();
+    }, 1800); 
 
     if (!specialtyProduct) {
       return res.status(404).json({
@@ -969,52 +940,58 @@ export const getLatestSpecialtyProduct = async (req, res) => {
     });
   }
 };
-
 export const getProductsByFilter = async (req, res) => {
   try {
-    const { sort } = req.query;
-    const now = new Date();
+    const { sort = "newest" } = req.query;
 
-    const filter = {
-      isActive: true,
-      isSpecialty: false
-    };
+    const cacheKey = `products:filter:sort:${sort}`;
 
-    let sortOption = { createdAt: -1 }; 
+    const products = await getOrSetCache(cacheKey, async () => {
+      const now = new Date();
+      const filter = {
+        isActive: true,
+        isSpecialty: false
+      };
 
-    switch (sort) {
-      case "price_asc":
-        sortOption = { price: 1 };
-        break;
-      case "price_desc":
-        sortOption = { price: -1 };
-        break;
-      case "sold_desc":
-        sortOption = { soldCount: -1 };
-        break;
-      case "sale":
-        sortOption = { soldCount: -1 }; 
-        break;
-      case "newest":
-      default:
-        sortOption = { createdAt: -1 };
-        break;
-    }
+      let sortOption = { createdAt: -1 }; 
 
-    let products = await Product.find(filter)
-      .populate({
-        path: "salePercent",
-        match: { startDate: { $lte: now }, endDate: { $gte: now } },
-        select: "percent"
-      })
-      .populate("categoryId", "name slug")
-      .sort(sortOption);
+      switch (sort) {
+        case "price_asc":
+          sortOption = { price: 1 };
+          break;
+        case "price_desc":
+          sortOption = { price: -1 };
+          break;
+        case "sold_desc":
+          sortOption = { soldCount: -1 };
+          break;
+        case "sale":
+          sortOption = { soldCount: -1 }; 
+          break;
+        case "newest":
+        default:
+          sortOption = { createdAt: -1 };
+          break;
+      }
 
-    if (sort === "sale") {
-      const withSale = products.filter(p => p.salePercent);
-      const withoutSale = products.filter(p => !p.salePercent);
-      products = [...withSale, ...withoutSale];
-    }
+      let data = await Product.find(filter)
+        .populate({
+          path: "salePercent",
+          match: { startDate: { $lte: now }, endDate: { $gte: now } },
+          select: "percent"
+        })
+        .populate("categoryId", "name slug")
+        .sort(sortOption)
+        .lean(); 
+
+      if (sort === "sale") {
+        const withSale = data.filter(p => p.salePercent);
+        const withoutSale = data.filter(p => !p.salePercent);
+        data = [...withSale, ...withoutSale];
+      }
+
+      return data;
+    }, 600); 
 
     return res.status(200).json({
       code: 200,

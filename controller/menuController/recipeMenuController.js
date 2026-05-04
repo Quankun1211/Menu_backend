@@ -4,6 +4,7 @@ import { Recipe } from "../../models/menuModels/RecipeModel.js";
 import cloudinary from "../../config/cloudinary.js";
 import {User} from "../../models/userModel.js"
 import {SaleItem} from "../../models/saleItemModel.js"
+import { getOrSetCache } from "../../utils/redis.utils.js";
 
 const Sale = mongoose.models.SaleItem || mongoose.model("SaleItem", SaleItem.schema);
 import mongoose from "mongoose";
@@ -157,23 +158,27 @@ export const getRecipeDetail = async (req, res) => {
 export const getRecipesByCategory = async (req, res) => {
   try {
     const { categoryId } = req.query;
-    const userId = req.user?.id; 
-    
-    let filter = {isDeleted: false};
-    if (categoryId && categoryId !== 'all') {
-      filter.category = categoryId;
-    }
+    const userId = req.user?.id;
 
-    const recipes = await Recipe.find(filter)
-      .populate("ingredients.ingredientId", "name customName image images")
-      .populate("category")
-      .sort({ createdAt: -1 })
-      .lean();
+    const cacheKey = `recipes:list:${categoryId || 'all'}`;
+
+    const recipes = await getOrSetCache(cacheKey, async () => {
+      let filter = { isDeleted: false };
+      if (categoryId && categoryId !== 'all') {
+        filter.category = categoryId;
+      }
+
+      return await Recipe.find(filter)
+        .populate("ingredients.ingredientId", "name customName image images")
+        .populate("category")
+        .sort({ createdAt: -1 })
+        .lean();
+    });
 
     let savedRecipeIds = [];
     if (userId) {
-      const user = await User.findById(userId).select("savedRecipes");
-      if (user && user.savedRecipes) {
+      const user = await User.findById(userId).select("savedRecipes").lean();
+      if (user?.savedRecipes) {
         savedRecipeIds = user.savedRecipes.map(id => id.toString());
       }
     }
@@ -182,32 +187,23 @@ export const getRecipesByCategory = async (req, res) => {
       const extraInfo = [];
 
       if (recipe.tips?.nutrition) {
-        extraInfo.push({ 
-          type: 'nutrition', 
-          data: recipe.tips.nutrition 
-        });
+        extraInfo.push({ type: 'nutrition', data: recipe.tips.nutrition });
       }
 
-      if (recipe.tips?.folkTips && recipe.tips.folkTips.length > 0) {
-        extraInfo.push({ 
-          type: 'folkTips', 
-          data: recipe.tips.folkTips 
-        });
+      if (recipe.tips?.folkTips?.length > 0) {
+        extraInfo.push({ type: 'folkTips', data: recipe.tips.folkTips });
       }
 
       if (recipe.suggestedSideDishes) {
-        extraInfo.push({ 
-          type: 'suggestedSideDishes', 
-          data: recipe.suggestedSideDishes 
-        });
+        extraInfo.push({ type: 'suggestedSideDishes', data: recipe.suggestedSideDishes });
       }
-      
+
       const { tips, suggestedSideDishes, ...rest } = recipe;
 
-      return { 
-        ...rest, 
+      return {
+        ...rest,
         extraInfo,
-        isSaved: savedRecipeIds.includes(recipe._id.toString()) 
+        isSaved: savedRecipeIds.includes(recipe._id.toString())
       };
     });
 
@@ -217,10 +213,10 @@ export const getRecipesByCategory = async (req, res) => {
       data: formattedRecipes,
     });
   } catch (error) {
+    console.error("Get recipes error:", error.message);
     return res.status(500).json({ error: error.message });
   }
 };
-
 export const createRecipePostman = async (req, res) => {
   try {
     let { 

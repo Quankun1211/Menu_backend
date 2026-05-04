@@ -1,6 +1,10 @@
 import crypto from 'crypto';
 import { format } from 'date-fns';
-
+function vnpayEncode(str) {
+  return encodeURIComponent(str)
+    .replace(/%20/g, '+')
+    .replace(/[!'()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+}
 export const createPaymentUrl = async ({ orderId, amount, ip, platform }) => {
   const tmnCode = process.env.VNP_TMN_CODE;
   const secretKey = process.env.VNP_HASH_SECRET;
@@ -32,28 +36,18 @@ export const createPaymentUrl = async ({ orderId, amount, ip, platform }) => {
     vnp_CreateDate: createDate,
   };
 
-  const keys = Object.keys(vnp_Params).sort();
-  const sortedParams = {};
-  keys.forEach(key => {
-    sortedParams[key] = vnp_Params[key];
-  });
+const keys = Object.keys(vnp_Params).sort();
 
-  const signData = keys
-    .map((key) => {
-      const value = String(sortedParams[key]);
-      return `${encodeURIComponent(key)}=${encodeURIComponent(value).replace(/%20/g, '+')}`;
-    })
-    .join('&');
+const queryParams = keys
+  .map((key) => {
+    return `${vnpayEncode(key)}=${vnpayEncode(String(vnp_Params[key]))}`;
+  })
+  .join('&');
 
-  const hmac = crypto.createHmac("sha512", secretKey);
-  const signed = hmac.update(Buffer.from(signData, 'utf-8')).digest("hex");
+const signData = queryParams;
 
-  const finalUrlParams = keys
-    .map((key) => {
-      const value = String(sortedParams[key]);
-      return `${encodeURIComponent(key)}=${encodeURIComponent(value).replace(/%20/g, '+')}`;
-    })
-    .join('&');
+const hmac = crypto.createHmac("sha512", secretKey);
+const signed = hmac.update(Buffer.from(signData, 'utf-8')).digest("hex");
 
-  return `${vnpUrl}?${finalUrlParams}&vnp_SecureHash=${signed}`;
+return `${vnpUrl}?${queryParams}&vnp_SecureHash=${signed}`;
 };

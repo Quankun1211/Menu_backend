@@ -2,6 +2,7 @@ import slugify from "slugify"
 import cloudinary from "../../config/cloudinary.js";
 import { CategoryMenu } from "../../models/menuModels/categoryMenuModel.js";
 import { CategoryRecipe } from "../../models/RecipeModels/categoryRecipeModel.js";
+import { getOrSetCache } from "../../utils/redis.utils.js";
 export const createCategoryMenu = async (req, res) => {
   try {
     const { name, title, description } = req.body;
@@ -36,7 +37,10 @@ export const createCategoryMenu = async (req, res) => {
 
 export const getCategoryMenu = async (req, res) => {
   try {
-    const categories = await CategoryMenu.find({isDeleted: false})
+    const categories = await getOrSetCache("categories:menu:all", async () => {
+      return await CategoryMenu.find({ isDeleted: false });
+    });
+
     return res.status(200).json({
       code: 200,
       data: categories,
@@ -79,13 +83,16 @@ export const createCategoryRecipe = async (req, res) => {
 };
 export const getCategoryRecipe = async (req, res) => {
   try {
-    const categories = await CategoryRecipe.find({isDeleted: false})
+    const categories = await getOrSetCache("categories:recipe:all", async () => {
+      return await CategoryRecipe.find({ isDeleted: false });
+    });
+
     return res.status(200).json({
       code: 200,
       data: categories,
     });
   } catch (error) {
-    console.error("Get categories error:", error.message);
-    return res.status(500).json({ error: "Internal server" });
+    console.error("Get CategoryRecipe error:", error.message);
+    return res.status(500).json({ error: "Internal server error" });
   }
 };

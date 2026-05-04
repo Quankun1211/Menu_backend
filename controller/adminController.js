@@ -15,6 +15,8 @@ import slugify from "slugify";
 import cloudinary from "../config/cloudinary.js"
 import fs from 'fs';
 
+import { clearCache } from "../utils/redis.utils.js";
+
 export const registerUser = async (req, res) => {
   try {
     const { name, username, email, password, phone, role } = req.body;
@@ -582,7 +584,11 @@ export const createCategory = async (req, res) => {
     }
 
     const newCategory = await Model.create(createData);
-
+    if (newCategory) {
+        const typeCacheKey = `categories:${type}`;
+        await clearCache(typeCacheKey);
+        console.log(`Redis: Cleared cache for ${type}`);
+    }
     return res.status(201).json({
       success: true,
       code: 201,

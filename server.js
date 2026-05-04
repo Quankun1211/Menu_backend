@@ -32,6 +32,8 @@ import recipeRoutes from "./routes/menuRoutes/recipeRoutes.js"
 import menuRoutes from "./routes/menuRoutes/menuRoutes.js"
 
 import notificationRoutes from "./routes/notificationRoutes.js"
+
+import { connectRedis } from "./config/redis.js"
 const app = express()
 app.use((req, res, next) => {
   res.setHeader('ngrok-skip-browser-warning', 'true');
@@ -95,16 +97,10 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    // Tự động rời các phòng khi ngắt kết nối
   });
 });
 
-// const sendLocationToUser = (orderId, lat, lng) => {
-//   io.to(orderId).emit('live_update', {
-//     latitude: lat,
-//     longitude: lng
-//   });
-// };
+
 
 app.use(express.json())
 app.use(cookieParser())
@@ -148,6 +144,21 @@ app.use((req, res, next) => {
 });
 global._io = io;
 app.set('io', io);
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+
+const startServer = async () => {
+    try {
+        await connect(); 
+
+        await connectRedis(); 
+
+        server.listen(PORT, '0.0.0.0', () => {
+            console.log(`🚀 Server is running on port ${PORT}`);
+            console.log(`📡 Socket.io is ready`);
+        });
+    } catch (error) {
+        console.error("💥 Failed to start application:", error);
+        process.exit(1);
+    }
+};
+
+startServer();

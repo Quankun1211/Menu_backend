@@ -60,9 +60,16 @@ export const applyCoupon = async (req, res) => {
     const { code, items, totalAmount } = req.body;
     const userId = req.user.id;
 
-    if (!code || !items?.length) return res.status(400).json({ code: 400, message: "Thiếu dữ liệu" });
+    if (!code || !items?.length) {
+      return res.status(400).json({ code: 400, message: "Thiếu dữ liệu" });
+    }
 
-    const coupon = await Coupons.findOne({ code: code.toUpperCase(), isActive: true });
+    const upperCode = code.toUpperCase();
+
+    const coupon = await getOrSetCache(`coupon:info:${upperCode}`, async () => {
+      return await Coupons.findOne({ code: upperCode, isActive: true });
+    }, 600); 
+
     if (!coupon) return res.status(404).json({ code: 404, message: "Mã giảm giá không tồn tại" });
 
     const userCoupon = await UserCoupon.findOne({ userId, couponId: coupon._id });
@@ -81,19 +88,23 @@ export const applyCoupon = async (req, res) => {
     }
 
     const now = new Date();
-    if (coupon.startDate > now || coupon.endDate < now) return res.status(400).json({ code: 400, message: "Mã đã hết hạn" });
+    if (new Date(coupon.startDate) > now || new Date(coupon.endDate) < now) {
+      return res.status(400).json({ code: 400, message: "Mã đã hết hạn" });
+    }
 
     if (coupon.usedCount >= coupon.usageLimit && !coupon.allowedUsers.includes(userId)) {
       return res.status(400).json({ code: 400, message: "Mã đã hết lượt dùng trên hệ thống" });
     }
 
-    if (totalAmount < coupon.minOrderValue) return res.status(400).json({ code: 400, message: `Đơn tối thiểu ${coupon.minOrderValue}đ` });
+    if (totalAmount < coupon.minOrderValue) {
+      return res.status(400).json({ code: 400, message: `Đơn tối thiểu ${coupon.minOrderValue}đ` });
+    }
 
     let applicableAmount = totalAmount;
-    if (coupon.applicableProducts.length > 0) {
+    if (coupon.applicableProducts?.length > 0) {
       applicableAmount = items
         .filter(i => coupon.applicableProducts.some(p => p.toString() === i.productId))
-        .reduce((sum, i) => sum + i.price * i.quantity, 0);
+        .reduce((sum, i) => sum + (i.price * i.quantity), 0);
     }
 
     if (applicableAmount <= 0) return res.status(400).json({ code: 400, message: "Sản phẩm không áp dụng mã" });
@@ -115,7 +126,7 @@ export const applyCoupon = async (req, res) => {
       },
     });
   } catch (error) {
-    console.log(error);
+    console.error("Apply Coupon Error:", error);
     return res.status(500).json({ code: 500, message: "Lỗi hệ thống" });
   }
 };

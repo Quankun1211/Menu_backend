@@ -1,7 +1,7 @@
 import slugify from "slugify";
 import { Special } from "../models/specialModel.js";
 import cloudinary from "../config/cloudinary.js";
-
+import { getOrSetCache } from "../utils/redis.utils.js";
 export const createSpecialProduct = async (req, res) => {
   try {
     const {
@@ -91,89 +91,91 @@ export const getProductsSpecialByRegion = async (req, res) => {
   try {
     const { region, sort = "newest" } = req.query;
 
-    const match = {
-      isActive: true
-    };
+    const cacheKey = `products:special_model:region:${region || 'all'}:sort:${sort}`;
 
-    if (region && region !== "all") {
-      if (!["bac", "trung", "nam"].includes(region)) {
-        return res.status(400).json({
-          code: 400,
-          message: "Region must be bac | trung | nam | all",
-        });
+    const products = await getOrSetCache(cacheKey, async () => {
+      const match = {
+        isActive: true
+      };
+
+      if (region && region !== "all") {
+        if (!["bac", "trung", "nam"].includes(region)) {
+          return null; 
+        }
+        match.region = region;
       }
-      match.region = region;
+
+      const sortMap = {
+        newest: { createdAt: -1 },
+        price_asc: { finalPrice: 1 },
+        price_desc: { finalPrice: -1 },
+        sold_desc: { soldCount: -1 },
+      };
+
+      const now = new Date();
+
+      return await Special.aggregate([
+        { $match: match },
+        {
+          $lookup: {
+            from: "saleitems",
+            localField: "salePercent",
+            foreignField: "_id",
+            as: "sale",
+          },
+        },
+        {
+          $unwind: {
+            path: "$sale",
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+        {
+          $addFields: {
+            salePercent: {
+              $cond: [
+                { $ifNull: ["$sale", false] },
+                {
+                  percent: "$sale.percent",
+                  startDate: "$sale.startDate",
+                  endDate: "$sale.endDate",
+                },
+                null,
+              ],
+            },
+            finalPrice: {
+              $cond: [
+                {
+                  $and: [
+                    { $ifNull: ["$sale.percent", false] },
+                    { $lte: ["$sale.startDate", now] },
+                    { $gte: ["$sale.endDate", now] },
+                  ],
+                },
+                {
+                  $multiply: [
+                    "$price",
+                    {
+                      $divide: [{ $subtract: [100, "$sale.percent"] }, 100],
+                    },
+                  ],
+                },
+                "$price",
+              ],
+            },
+          },
+        },
+        { $sort: sortMap[sort] || sortMap.newest },
+        { $project: { sale: 0 } },
+      ]);
+    }, 1800); 
+
+    if (products === null) {
+      return res.status(400).json({
+        code: 400,
+        message: "Region must be bac | trung | nam | all",
+      });
     }
-
-    const sortMap = {
-      newest: { createdAt: -1 },
-      price_asc: { finalPrice: 1 },
-      price_desc: { finalPrice: -1 },
-      sold_desc: { soldCount: -1 },
-    };
-
-    const products = await Special.aggregate([
-      { $match: match },
-
-      {
-        $lookup: {
-          from: "saleitems", 
-          localField: "salePercent",
-          foreignField: "_id",
-          as: "sale",
-        },
-      },
-      {
-        $unwind: {
-          path: "$sale",
-          preserveNullAndEmptyArrays: true,
-        },
-      },
-
-      {
-        $addFields: {
-          salePercent: {
-            $cond: [
-              { $ifNull: ["$sale", false] },
-              {
-                percent: "$sale.percent",
-                startDate: "$sale.startDate",
-                endDate: "$sale.endDate",
-              },
-              null,
-            ],
-          },
-          finalPrice: {
-            $cond: [
-              {
-                $and: [
-                  { $ifNull: ["$sale.percent", false] },
-                  { $lte: ["$sale.startDate", new Date()] },
-                  { $gte: ["$sale.endDate", new Date()] },
-                ],
-              },
-              {
-                $multiply: [
-                  "$price",
-                  {
-                    $divide: [{ $subtract: [100, "$sale.percent"] }, 100],
-                  },
-                ],
-              },
-              "$price",
-            ],
-          },
-        },
-      },
-
-      { $sort: sortMap[sort] || sortMap.newest },
-
-      {
-        $project: {
-          sale: 0,
-        },
-      },
-    ]);
 
     return res.status(200).json({
       code: 200,

@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import { Product } from "../../models/productsModel.js"
 import { Ingredient } from "../../models/menuModels/ingredientModel.js";
 import cloudinary from "../../config/cloudinary.js";
+import { getOrSetCache } from "../../utils/redis.utils.js";
 export const createIngredient = async (req, res) => {
   try {
     const { customName, price, unit } = req.body;
@@ -47,14 +48,20 @@ export const createIngredient = async (req, res) => {
 
 export const getAllIngredient = async (req, res) => {
   try {
-    const ingredients = await Ingredient.find().sort({ createdAt: -1 });
+    const ingredients = await getOrSetCache("ingredients:all", async () => {
+      return await Ingredient.find().sort({ createdAt: -1 });
+    });
 
     return res.status(200).json({
       success: true,
       data: ingredients,
     });
   } catch (error) {
-    return res.status(500).json({ error: "Lỗi hệ thống khi lấy danh sách nguyên liệu" });
+    console.error("Get all ingredients error:", error.message);
+    return res.status(500).json({ 
+      success: false, 
+      error: "Lỗi hệ thống khi lấy danh sách nguyên liệu" 
+    });
   }
 };
 
@@ -83,8 +90,10 @@ export const getIngredientById = async (req, res) => {
 
 export const getSystemIngredients = async (req, res) => {
   try {
-    const ingredients = await Ingredient.find({ creatorId: null })
-      .sort({ customName: 1 });
+    const ingredients = await getOrSetCache("ingredients:system", async () => {
+      return await Ingredient.find({ creatorId: null })
+        .sort({ customName: 1 });
+    });
 
     return res.status(200).json({
       success: true,
@@ -92,7 +101,10 @@ export const getSystemIngredients = async (req, res) => {
     });
   } catch (error) {
     console.error("Get system ingredients error:", error.message);
-    return res.status(500).json({ error: "Internal server error" });
+    return res.status(500).json({ 
+      success: false, 
+      error: "Internal server error" 
+    });
   }
 };
 

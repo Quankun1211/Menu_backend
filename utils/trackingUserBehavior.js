@@ -1,5 +1,6 @@
 import { UserBehavior } from "../models/userBehaviorModel.js";
 import axios from "axios";
+import { redisClient } from "../config/redis.js";
 export const trackBehavior = (action, targetType) => {
   return async (req, res, next) => {
     next(); 
@@ -49,34 +50,40 @@ export const triggerAIUpdate = async (userId, targetId = "general") => {
         return;
     }
 
-    const now = Date.now();
-    const COOLDOWN_TIME = 30 * 1000; 
+    const COOLDOWN_TIME = 30; 
+    const cooldownKey = `ai:cooldown:${userId}`;
 
-    const userHistory = userLastActionCache.get(userId);
-
-    if (userHistory) {
-        if (userHistory.lastTargetId !== cleanTargetId) {
-            console.log(`[AI] Đổi sản phẩm: ${userHistory.lastTargetId} -> ${cleanTargetId}. RESET COOLDOWN.`);
-        } 
-        else if (now - userHistory.lastTimestamp < COOLDOWN_TIME) {
-            return;
-        }
-    }
-
-    const url = `https://mc-prod.onrender.com/recommend/${userId}`;
-    
     try {
-        userLastActionCache.set(userId, {
+        const lastAction = await redisClient.get(cooldownKey);
+        
+        if (lastAction) {
+            const history = JSON.parse(lastAction);
+            if (history.lastTargetId === cleanTargetId) {
+                return;
+            }
+            console.log(`[AI] Đổi sản phẩm: ${history.lastTargetId} -> ${cleanTargetId}. RESET COOLDOWN.`);
+        }
+
+        const url = `https://mc-prod.onrender.com/recommend/${userId}`;
+        
+        await redisClient.setEx(cooldownKey, COOLDOWN_TIME, JSON.stringify({
             lastTargetId: cleanTargetId,
-            lastTimestamp: now
-        });
+            lastTimestamp: Date.now()
+        }));
 
         axios.get(url)
-            .then(res => {
-                console.log(`[AI] Update thành công User: ${userId} | Context: ${cleanTargetId}`);
+            .then(async (res) => {
+                console.log(`[AI] Update thành công User: ${userId}`);
+                
+                const pattern = `products:suggested:${userId}:*`;
+                const keys = await redisClient.keys(pattern);
+                if (keys.length > 0) {
+                    await redisClient.del(keys);
+                    console.log(`[AI] Đã xóa ${keys.length} cache cũ của User ${userId}`);
+                }
             })
-            .catch(err => {
-                userLastActionCache.delete(userId);
+            .catch(async (err) => {
+                await redisClient.del(cooldownKey);
                 console.error(`[AI] Lỗi kết nối Render: ${err.message}`);
             });
 
