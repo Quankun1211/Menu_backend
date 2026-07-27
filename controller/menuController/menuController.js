@@ -132,7 +132,7 @@ export const getMenus = async (req, res) => {
                                     const lineTotal = details.price * useQuantity;
                                     totalPriceAll += lineTotal;
 
-                                    if (recipeIng.itemType === 'Product' || details.productId) {
+                                    if (['Product', 'Special'].includes(recipeIng.itemType) || details.productId) {
                                         totalPriceInDB += lineTotal;
                                     }
                                 }
@@ -167,11 +167,8 @@ export const getMenuDetail = async (req, res) => {
     try {
         const { id } = req.params;
 
-        if (!mongoose.Types.ObjectId.isValid(id)) {
-            return res.status(400).json({ message: "Invalid Menu ID format" });
-        }
-
-        const menu = await Menu.findOne({ _id: id, isDeleted: false })
+        const identifierFilter = mongoose.Types.ObjectId.isValid(id) ? { _id: id } : { slug: id };
+        const menu = await Menu.findOne({ ...identifierFilter, isDeleted: false })
             .populate({
                 path: 'recipes',
                 match: { isDeleted: false },
@@ -198,7 +195,7 @@ export const getMenuDetail = async (req, res) => {
                     recipe.ingredients.forEach(ing => {
                         const detail = ing.ingredientId;
                         if (detail) {
-                            const pId = ing.itemType === 'Product' ? detail._id : detail.productId;
+                            const pId = ['Product', 'Special'].includes(ing.itemType) ? detail._id : detail.productId;
                             const finalName = detail.customName || detail.name;
                             
                             const originalPrice = detail.price || 0;
@@ -230,7 +227,7 @@ export const getMenuDetail = async (req, res) => {
                                     globalIngredientsMap[pId] = {
                                         price: discountedPrice,
                                         totalQty: 0,
-                                        isProduct: ing.itemType === 'Product' || !!detail.productId
+                                        isProduct: ['Product', 'Special'].includes(ing.itemType) || !!detail.productId
                                     };
                                 }
                                 globalIngredientsMap[pId].totalQty += qty;

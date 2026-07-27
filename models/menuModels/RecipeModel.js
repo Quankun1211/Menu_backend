@@ -18,7 +18,7 @@ const RecipeSchema = new mongoose.Schema({
     itemType: {
       type: String,
       required: true,
-      enum: ['Product', 'Ingredient'],
+      enum: ['Product', 'Special', 'Ingredient'],
       default: 'Ingredient'
     },
     quantity: { type: Number, required: true }, 

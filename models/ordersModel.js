@@ -25,6 +25,12 @@ const orderSchema = new mongoose.Schema({
         type: Number,
         required: true
     },
+    shippingFee: {
+        type: Number,
+        required: true,
+        min: 0,
+        default: 25000
+    },
     status: {
         type: String,
         enum: [
@@ -64,6 +70,11 @@ const orderSchema = new mongoose.Schema({
         enum: ['cod', 'vnpay', 'momo', 'stripe', 'wallet'],
         default: 'cod'
     },
+    source: {
+        type: String,
+        enum: ["cart", "buy_now", "menu", "recipe"],
+        default: "cart"
+    },
     paymentStatus: {
         type: String,
         enum: ['pending', 'paid', 'failed', 'refunded'],
@@ -72,6 +83,8 @@ const orderSchema = new mongoose.Schema({
     paidAt: {
         type: Date
     },
+    paymentExpiresAt: Date,
+    inventoryReleasedAt: Date,
     shippedAt: {
         type: Date
     },

@@ -2,6 +2,8 @@ import { CartItems } from "../models/cartsItemModel.js";
 import { Cart } from "../models/cartsModel.js";
 import mongoose from "mongoose";
 import { triggerAIUpdate } from "../utils/trackingUserBehavior.js";
+import { Product } from "../models/productsModel.js";
+import { Special } from "../models/specialModel.js";
 
 export const addToCart = async (req, res) => {
   try {
@@ -16,6 +18,13 @@ export const addToCart = async (req, res) => {
       return res.status(400).json({ message: "Quantity must be greater than 0" });
     }
 
+    const product = await Product.findOne({ _id: productId, isActive: true }).select("_id");
+    const special = product ? null : await Special.findOne({ _id: productId, isActive: true }).select("_id");
+    if (!product && !special) {
+      return res.status(404).json({ message: "Product or special not found" });
+    }
+    const itemType = special ? "Special" : "Product";
+
     let cart = await Cart.findOne({ userId });
 
     if (!cart) {
@@ -25,6 +34,7 @@ export const addToCart = async (req, res) => {
     const existedItem = await CartItems.findOne({
       cartId: cart._id,
       productId,
+      itemType,
     });
 
     if (existedItem) {
@@ -34,6 +44,7 @@ export const addToCart = async (req, res) => {
       await CartItems.create({
         cartId: cart._id,
         productId,
+        itemType,
         quantity,
       });
     }
@@ -77,7 +88,27 @@ export const getCart = async (req, res) => {
           as: "product",
         },
       },
-      { $unwind: "$product" },
+      {
+        $lookup: {
+          from: "specials",
+          localField: "productId",
+          foreignField: "_id",
+          as: "special",
+        },
+      },
+      {
+        $addFields: {
+          itemType: { $ifNull: ["$itemType", "Product"] },
+          product: {
+            $cond: [
+              { $eq: [{ $ifNull: ["$itemType", "Product"] }, "Special"] },
+              { $arrayElemAt: ["$special", 0] },
+              { $arrayElemAt: ["$product", 0] },
+            ],
+          },
+        },
+      },
+      { $match: { product: { $ne: null } } },
 
       {
         $lookup: {

@@ -96,7 +96,8 @@ export const getRecipeDetail = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const recipe = await Recipe.findById(id)
+    const identifierFilter = mongoose.Types.ObjectId.isValid(id) ? { _id: id } : { slug: id };
+    const recipe = await Recipe.findOne(identifierFilter)
       .populate({
         path: "ingredients.ingredientId",
         select: "name customName price salePercent image images unit",

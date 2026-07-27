@@ -8,7 +8,13 @@ const orderItemSchema = new mongoose.Schema({
     },
     productId: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: "Product",
+        refPath: "itemType",
+        required: true
+    },
+    itemType: {
+        type: String,
+        enum: ["Product", "Special"],
+        default: "Product",
         required: true
     },
     productName: {

@@ -1,13 +1,15 @@
 import express from "express"
 import upload from "../../middleware/upload.js"
 import { createIngredient, getAllIngredient, getIngredientById, getSystemIngredients } from "../../controller/menuController/ingredientController.js"
-import { protectRoute } from "../../middleware/protectRoute.js"
+import { authorizeRole, protectRoute } from "../../middleware/protectRoute.js"
+import { validate } from "../../middleware/validate.js"
+import { catalogSchema, objectIdParams, paginationQuery } from "../../validation/schemas.js"
 
 const router = express.Router()
 
-router.post("/create", upload.single("image"), createIngredient)
-router.get("/get-all", getAllIngredient)
-router.get("/get-filter", getSystemIngredients)
-router.get("/get/:ingredientId", getIngredientById)
+router.post("/create", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), validate(catalogSchema), createIngredient)
+router.get("/get-all", validate(paginationQuery, "query"), getAllIngredient)
+router.get("/get-filter", validate(paginationQuery, "query"), getSystemIngredients)
+router.get("/get/:ingredientId", validate(objectIdParams("ingredientId"), "params"), getIngredientById)
 
 export default router

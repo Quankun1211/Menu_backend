@@ -1,10 +1,12 @@
 import { User } from "../models/userModel.js";
 import bcryptjs from "bcryptjs"
-import generateTokenAndSetCookie from "../utils/generateToken.js";
 import {sendOTPEmail} from "../utils/mailer.js"
 import { triggerAIUpdate } from "../utils/trackingUserBehavior.js";
 import { Notification } from "../models/notification/notificationSchema.js"
 import { redisClient } from "../config/redis.js";
+import jwt from "jsonwebtoken";
+import { AuthSession } from "../models/authSessionModel.js";
+import { hashToken, issueSession, setCsrfToken } from "../utils/generateToken.js";
 const generateRandomAvatar = (username) => {
   const params = [
     'backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf', 
@@ -38,7 +40,7 @@ export const signUp = async (req, res) => {
     const salt = await bcryptjs.genSalt(10);
     const hashedPassword = await bcryptjs.hash(password, salt);
 
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = String((await import("crypto")).randomInt(100000, 1000000));
     await redisClient.set(`otp:${email}`, otp, { EX: 600 });
 
     const newUser = await User.create({
@@ -74,6 +76,12 @@ export const signUp = async (req, res) => {
 export const verifyOTP = async (req, res) => {
     try {
         const { email, otp, type } = req.body;
+        const attemptsKey = `otp:attempts:${type || "verify"}:${email}`;
+        const attempts = await redisClient.incr(attemptsKey);
+        if (attempts === 1) await redisClient.expire(attemptsKey, 600);
+        if (attempts > 5) {
+            return res.status(429).json({ message: "Quá nhiều lần thử OTP" });
+        }
 
         const storedOtp = await redisClient.get(`otp:${email}`);
 
@@ -98,6 +106,7 @@ export const verifyOTP = async (req, res) => {
         if (type !== 'reset') {
             await redisClient.del(`otp:${email}`);
         }
+        await redisClient.del(attemptsKey);
 
         return res.status(200).json({ 
             message: "Xác thực thành công!",
@@ -111,15 +120,20 @@ export const verifyOTP = async (req, res) => {
 export const resendOTP = async (req, res) => {
     try {
         const { email } = req.body;
+        const cooldownKey = `otp:cooldown:${email}`;
+        if (await redisClient.get(cooldownKey)) {
+          return res.status(429).json({ message: "Vui lòng chờ trước khi gửi lại OTP" });
+        }
         const user = await User.findOne({ email });
 
         if (!user) {
             return res.status(404).json({ message: "Email không tồn tại" });
         }
 
-        const newOtp = Math.floor(100000 + Math.random() * 900000).toString();
+        const newOtp = String((await import("crypto")).randomInt(100000, 1000000));
         
         await redisClient.set(`otp:${email}`, newOtp, { EX: 600 });
+        await redisClient.set(cooldownKey, "1", { EX: 60 });
 
         sendOTPEmail(email, newOtp).catch(err => 
             console.error(`[Mail Error] Gửi lại OTP cho ${email} thất bại:`, err)
@@ -145,7 +159,7 @@ export const forgotPassword = async (req, res) => {
       return res.status(404).json({ error: "Email không tồn tại trong hệ thống" });
     }
 
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = String((await import("crypto")).randomInt(100000, 1000000));
     
     await redisClient.set(`otp:reset:${email}`, otp, { EX: 600 });
 
@@ -221,7 +235,10 @@ export const login = async (req, res) => {
         if(!isPasswordCorrect) {
             return res.status(400).json({error: "Invalid password"})
         }
-        const token = generateTokenAndSetCookie(user, res)
+        if (!user.isVerified || !user.isActive) {
+          return res.status(403).json({ error: "Tài khoản chưa xác minh hoặc đã bị khóa" });
+        }
+        const session = await issueSession(user, res, req)
         console.log("Login ok");
         triggerAIUpdate(user._id)
         
@@ -233,7 +250,7 @@ export const login = async (req, res) => {
               email: user.email,
               name: user.name,
               role: user.role,
-              access_token: token
+              csrfToken: session.csrfToken
             }
         })
     } catch (error) {
@@ -244,7 +261,19 @@ export const login = async (req, res) => {
 
 export const logout = async (req, res) => {
     try {
-        res.cookie("jwt", "", { maxAge: 0 });
+        const rawRefresh = req.cookies?.refresh_token;
+        if (rawRefresh) {
+          try {
+            const decoded = jwt.verify(rawRefresh, process.env.JWT_SECRET);
+            await AuthSession.updateOne(
+              { tokenHash: hashToken(decoded.jti) },
+              { revokedAt: new Date() },
+            );
+          } catch {}
+        }
+        res.clearCookie("jwt");
+        res.clearCookie("refresh_token", { path: "/api/auth" });
+        res.clearCookie("csrf_token");
         console.log("Logout ok");
         res.status(200).json({ 
             code: 200,
@@ -255,6 +284,46 @@ export const logout = async (req, res) => {
         res.status(500).json({ error: "Internal server" });
     }
 }
+
+export const getCsrfToken = (req, res) => {
+  const csrfToken = setCsrfToken(res, req.cookies?.csrf_token);
+  return res.status(200).json({
+    success: true,
+    data: { csrfToken },
+  });
+};
+
+export const refreshAccessToken = async (req, res) => {
+  try {
+    const refreshToken = req.cookies?.refresh_token || req.body?.token;
+    if (!refreshToken) return res.status(401).json({ error: "Refresh token is required" });
+    const decoded = jwt.verify(refreshToken, process.env.JWT_SECRET);
+    if (decoded.tokenType !== "refresh") return res.status(401).json({ error: "Invalid refresh token" });
+    const session = await AuthSession.findOne({ tokenHash: hashToken(decoded.jti) });
+    if (!session || session.expiresAt <= new Date()) {
+      return res.status(401).json({ error: "Refresh session is unavailable" });
+    }
+    if (session.revokedAt) {
+      await AuthSession.updateMany(
+        { familyId: decoded.familyId, revokedAt: null },
+        { revokedAt: new Date() },
+      );
+      return res.status(401).json({ error: "Refresh token reuse detected" });
+    }
+    const user = await User.findById(decoded.userId);
+    if (!user?.isActive || !user.isVerified) return res.status(401).json({ error: "Account is unavailable" });
+    const rotated = await issueSession(user, res, req, decoded.familyId);
+    session.revokedAt = new Date();
+    session.replacedByHash = hashToken(rotated.jti);
+    await session.save();
+    return res.status(200).json({
+      code: 200,
+      data: { refreshed: true, csrfToken: rotated.csrfToken },
+    });
+  } catch {
+    return res.status(401).json({ error: "Invalid or expired refresh token" });
+  }
+};
 
 export const createSuperAdmin = async (req, res) => {
   try {

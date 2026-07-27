@@ -8,6 +8,7 @@ import {FavouriteItem} from "../models/favouriteItem.js"
 import {Favourite} from "../models/favouriteModel.js"
 import { Ingredient } from "../models/menuModels/ingredientModel.js";
 import { Recipe } from "../models/menuModels/RecipeModel.js";
+import { Special } from "../models/specialModel.js";
 import axios from "axios";
 import { triggerAIUpdate } from "../utils/trackingUserBehavior.js";
 
@@ -1010,16 +1011,13 @@ export const getProductDetail = async (req, res) => {
   try {
     const { id } = req.params;
 
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ code: 400, message: "Invalid product id" });
-    }
-
-    const checkProduct = await Product.findById(id).select("isSpecialty");
+    const identifierFilter = mongoose.Types.ObjectId.isValid(id) ? { _id: id } : { slug: id };
+    const checkProduct = await Product.findOne(identifierFilter).select("_id isSpecialty");
     if (!checkProduct) {
       return res.status(404).json({ code: 404, message: "Product not found" });
     }
 
-    const productId = new mongoose.Types.ObjectId(id);
+    const productId = checkProduct._id;
 
     const pipeline = [
       {
@@ -1352,7 +1350,7 @@ export const previewCheckout = async (req, res) => {
       return new mongoose.Types.ObjectId(i.productId);
     });
 
-    const products = await Product.aggregate([
+    let products = await Product.aggregate([
       {
         $match: {
           _id: { $in: productIds },
@@ -1423,6 +1421,28 @@ export const previewCheckout = async (req, res) => {
       },
     ]);
 
+    const foundProductIds = new Set(products.map((item) => item._id.toString()));
+    const missingIds = productIds.filter((id) => !foundProductIds.has(id.toString()));
+    if (missingIds.length > 0) {
+      const specialDocuments = await Special.find({
+        _id: { $in: missingIds },
+        isActive: true,
+      }).populate("salePercent").lean();
+      const now = new Date();
+      products = products.concat(specialDocuments.map((special) => {
+        const sale = special.salePercent;
+        const hasSale = sale && now >= new Date(sale.startDate) && now <= new Date(sale.endDate);
+        return {
+          ...special,
+          itemType: "Special",
+          salePercent: hasSale ? sale : null,
+          finalPrice: hasSale
+            ? Math.round(special.price * (100 - sale.percent) / 100)
+            : special.price,
+        };
+      }));
+    }
+
     if (products.length !== items.length) {
       return res.status(400).json({
         code: 400,
@@ -1444,6 +1464,7 @@ export const previewCheckout = async (req, res) => {
 
       return {
         productId: product._id,
+        itemType: product.itemType || "Product",
         name: product.name,
         price: product.price,
         sale: product.salePercent,

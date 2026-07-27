@@ -3,26 +3,34 @@ import mongoose from "mongoose";
 const userSchema = new mongoose.Schema({
     name: {
         type: String,
-        require: true
+        required: true,
+        trim: true
     },
     username: {
         type: String,
-        require: true
+        required: true,
+        trim: true,
+        unique: true,
+        lowercase: true
     },
     password: {
         type: String,
-        require: true,
+        required: true,
         minlength: 6
     },
     email: {
         type: String,
-        require: true
+        required: true,
+        trim: true,
+        unique: true,
+        lowercase: true
     },
     phone: {
       type: String,
     },
     role: {
         type: String,
+        enum: ["user", "shipper", "admin", "super_admin"],
         default: "user"
     }, 
     avatar: {
@@ -63,7 +71,6 @@ const userSchema = new mongoose.Schema({
   }
 }, {timestamps: true})
 
-userSchema.index({ "viewHistory.categoryId": 1 });
 userSchema.index({ "viewHistory.lastViewedAt": -1 });
 
 export const User = mongoose.model("User", userSchema)

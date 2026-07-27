@@ -1,54 +1,66 @@
 import express from "express"
 import upload from "../middleware/upload.js"
 import { protectRoute, authorizeRole } from "../middleware/protectRoute.js"
+import { validate } from "../middleware/validate.js"
+import {
+  adminCancelSchema,
+  adminUserSchema,
+  adminUserUpdateSchema,
+  assignOrderSchema,
+  catalogSchema,
+  categorySchema,
+  objectIdParams,
+  paginationQuery,
+  saleSchema,
+} from "../validation/schemas.js"
 import { approveCancelOrder, assignOrderToShipper, createCategory, createIngredient, createMenu, createProduct, createRecipeAdmin, createSale, deleteCategory, deleteIngredient, deleteMenu, deleteProductAdmin, deleteRecipeAdmin, deleteSale, deleteUser, getAdminAndShippers, getAllIngredientsAdmin, getAllMenus, getAllOrders, getAllRecipesAdmin, getAllSalesAdmin, getCategories, getMenuById, getProductDetailAdmin, getProducts, getRecipeByIdAdmin, getSaleItems, getSpecials, processCancelOrder, registerUser, updateCategory, updateIngredient, updateMenu, updateProductAdmin, updateRecipeAdmin, updateSale, updateUser } from "../controller/adminController.js"
 const router = express.Router()
 
 // Get
-router.get("/users-get", protectRoute, authorizeRole(["admin", "super_admin"]), getAdminAndShippers);
-router.get("/get-all-orders", protectRoute, authorizeRole(["admin", "super_admin"]), getAllOrders);
-router.get("/get-all-products", protectRoute, authorizeRole(["admin", "super_admin"]), getProducts);
-router.get("/get-all-category", protectRoute, authorizeRole(["admin", "super_admin"]), getCategories);
-router.get("/get-all-specials", protectRoute, authorizeRole(["admin", "super_admin"]), getSpecials);
-router.get("/get-all-recipes", protectRoute, authorizeRole(["admin", "super_admin"]), getAllRecipesAdmin);
-router.get("/get-all-ingredients", protectRoute, authorizeRole(["admin", "super_admin"]), getAllIngredientsAdmin);
-router.get("/get-all-menus", protectRoute, authorizeRole(["admin", "super_admin"]), getAllMenus);
-router.get("/get-all-sales", protectRoute, authorizeRole(["admin", "super_admin"]), getSaleItems);
-router.get("/get-sales", protectRoute, authorizeRole(["admin", "super_admin"]), getAllSalesAdmin);
-router.get("/get-product-detail/:id", protectRoute, authorizeRole(["admin", "super_admin"]), getProductDetailAdmin);
-router.get("/get-recipe-detail/:id", protectRoute, authorizeRole(["admin", "super_admin"]), getRecipeByIdAdmin);
-router.get("/get-menu-detail/:id", protectRoute, authorizeRole(["admin", "super_admin"]), getMenuById);
+router.get("/users-get", protectRoute, authorizeRole(["admin", "super_admin"]), validate(paginationQuery, "query"), getAdminAndShippers);
+router.get("/get-all-orders", protectRoute, authorizeRole(["admin", "super_admin"]), validate(paginationQuery, "query"), getAllOrders);
+router.get("/get-all-products", protectRoute, authorizeRole(["admin", "super_admin"]), validate(paginationQuery, "query"), getProducts);
+router.get("/get-all-category", protectRoute, authorizeRole(["admin", "super_admin"]), validate(paginationQuery, "query"), getCategories);
+router.get("/get-all-specials", protectRoute, authorizeRole(["admin", "super_admin"]), validate(paginationQuery, "query"), getSpecials);
+router.get("/get-all-recipes", protectRoute, authorizeRole(["admin", "super_admin"]), validate(paginationQuery, "query"), getAllRecipesAdmin);
+router.get("/get-all-ingredients", protectRoute, authorizeRole(["admin", "super_admin"]), validate(paginationQuery, "query"), getAllIngredientsAdmin);
+router.get("/get-all-menus", protectRoute, authorizeRole(["admin", "super_admin"]), validate(paginationQuery, "query"), getAllMenus);
+router.get("/get-all-sales", protectRoute, authorizeRole(["admin", "super_admin"]), validate(paginationQuery, "query"), getSaleItems);
+router.get("/get-sales", protectRoute, authorizeRole(["admin", "super_admin"]), validate(paginationQuery, "query"), getAllSalesAdmin);
+router.get("/get-product-detail/:id", protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), getProductDetailAdmin);
+router.get("/get-recipe-detail/:id", protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), getRecipeByIdAdmin);
+router.get("/get-menu-detail/:id", protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), getMenuById);
 
 // Create
-router.post("/create-user", protectRoute, authorizeRole(["admin", "super_admin"]), registerUser)
-router.post("/create-category", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), createCategory)
-router.post("/create-product", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), createProduct)
-router.post("/create-sale", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), createSale)
-router.post("/create-ingredient", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), createIngredient)
-router.post("/create-recipe", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), createRecipeAdmin)
-router.post("/create-menu", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), createMenu)
+router.post("/create-user", protectRoute, authorizeRole(["admin", "super_admin"]), validate(adminUserSchema), registerUser)
+router.post("/create-category", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), validate(categorySchema), createCategory)
+router.post("/create-product", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), validate(catalogSchema), createProduct)
+router.post("/create-sale", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), validate(saleSchema), createSale)
+router.post("/create-ingredient", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), validate(catalogSchema), createIngredient)
+router.post("/create-recipe", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), validate(catalogSchema), createRecipeAdmin)
+router.post("/create-menu", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), validate(catalogSchema), createMenu)
 
 // Update
-router.patch("/users-update/:id", protectRoute, authorizeRole(["admin", "super_admin"]), updateUser);
-router.put("/category-update/:id", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), updateCategory);
-router.put("/product-update/:id", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), updateProductAdmin);
-router.put("/sale-update/:id", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), updateSale);
-router.put("/ingredient-update/:id", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), updateIngredient);
-router.put("/recipe-update/:id", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), updateRecipeAdmin);
-router.put("/menu-update/:id", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), updateMenu);
+router.patch("/users-update/:id", protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), validate(adminUserUpdateSchema), updateUser);
+router.put("/category-update/:id", protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), upload.single("image"), validate(categorySchema.fork(["name"], (schema) => schema.optional())), updateCategory);
+router.put("/product-update/:id", protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), upload.single("image"), validate(catalogSchema), updateProductAdmin);
+router.put("/sale-update/:id", protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), upload.single("image"), validate(saleSchema.fork(["percent", "startDate", "endDate"], (schema) => schema.optional())), updateSale);
+router.put("/ingredient-update/:id", protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), upload.single("image"), validate(catalogSchema), updateIngredient);
+router.put("/recipe-update/:id", protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), upload.single("image"), validate(catalogSchema), updateRecipeAdmin);
+router.put("/menu-update/:id", protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), upload.single("image"), validate(catalogSchema), updateMenu);
 
 // Delete
-router.delete("/users-delete/:id", protectRoute, authorizeRole(["admin", "super_admin"]), deleteUser);
-router.delete("/category-delete/:id", protectRoute, authorizeRole(["admin", "super_admin"]), deleteCategory);
-router.delete("/product-delete/:id", protectRoute, authorizeRole(["admin", "super_admin"]), deleteProductAdmin);
-router.delete("/sale-delete/:id", protectRoute, authorizeRole(["admin", "super_admin"]), deleteSale);
-router.delete("/ingredient-delete/:id", protectRoute, authorizeRole(["admin", "super_admin"]), deleteIngredient);
-router.delete("/recipe-delete/:id", protectRoute, authorizeRole(["admin", "super_admin"]), deleteRecipeAdmin);
-router.delete("/menu-delete/:id", protectRoute, authorizeRole(["admin", "super_admin"]), deleteMenu);
+router.delete("/users-delete/:id", protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), deleteUser);
+router.delete("/category-delete/:id", protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), deleteCategory);
+router.delete("/product-delete/:id", protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), deleteProductAdmin);
+router.delete("/sale-delete/:id", protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), deleteSale);
+router.delete("/ingredient-delete/:id", protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), deleteIngredient);
+router.delete("/recipe-delete/:id", protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), deleteRecipeAdmin);
+router.delete("/menu-delete/:id", protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), deleteMenu);
 
 // Admin role
-router.patch("/process-cancel", protectRoute, processCancelOrder);
-router.post("/assign-order", assignOrderToShipper)
-router.post("/approve-order-cancelled", approveCancelOrder)
+router.patch("/process-cancel", protectRoute, authorizeRole(["admin", "super_admin"]), validate(adminCancelSchema), processCancelOrder);
+router.post("/assign-order", protectRoute, authorizeRole(["admin", "super_admin"]), validate(assignOrderSchema), assignOrderToShipper)
+router.post("/approve-order-cancelled", protectRoute, authorizeRole(["admin", "super_admin"]), validate(adminCancelSchema), approveCancelOrder)
 
 export default router

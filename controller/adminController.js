@@ -2,6 +2,7 @@ import { Order } from "../models/ordersModel.js";
 import { User } from "../models/userModel.js"; 
 import { OrderItem } from "../models/orderItemsModel.js"
 import { Product } from "../models/productsModel.js"
+import { Special } from "../models/specialModel.js"
 import { Category } from "../models/categoriesModel.js"
 import { CategoryMenu } from "../models/menuModels/categoryMenuModel.js"
 import { SaleItem } from "../models/saleItemModel.js";
@@ -459,7 +460,7 @@ export const getSpecials = async (req, res) => {
     const status = req.query.status;
     const skip = (page - 1) * limit;
 
-    let filter = { isSpecialty: true, isActive: true };
+    let filter = { isActive: true };
 
     if (status === 'in_stock') {
       filter.stock = { $gt: 0 };
@@ -467,8 +468,8 @@ export const getSpecials = async (req, res) => {
       filter.stock = { $lte: 0 };
     }
 
-    const total = await Product.countDocuments(filter);
-    const products = await Product.find(filter)
+    const total = await Special.countDocuments(filter);
+    const products = await Special.find(filter)
       .skip(skip)
       .limit(limit)
       .sort({ createdAt: -1 });

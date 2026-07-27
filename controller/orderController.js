@@ -4,6 +4,7 @@ import { CartItems } from "../models/cartsItemModel.js"
 import { Order } from "../models/ordersModel.js";
 import { OrderItem } from "../models/orderItemsModel.js";
 import { Product } from "../models/productsModel.js"
+import { Special } from "../models/specialModel.js"
 import { Coupons } from "../models/couponsModel.js"
 import { refundOrderLogic } from "../utils/vnpayRefund.js"; 
 import { UserCoupon } from "../models/userCouponModel.js";
@@ -17,6 +18,8 @@ import { createPaymentUrl } from "../services/createPaymentUrl.js";
 import { triggerAIUpdate } from "../utils/trackingUserBehavior.js";
 
 import { UserBehavior } from "../models/userBehaviorModel.js";
+import { Address } from "../models/addressModel.js";
+import { getShippingFeeValue } from "./configController.js";
 
 export const createOrder = async (req, res) => {
   const session = await mongoose.startSession();
@@ -25,19 +28,26 @@ export const createOrder = async (req, res) => {
 
   try {
     const userId = req.user.id;
-    const { items, address, couponCode, source, paymentMethod = "cod", shippingFee = 0, platform = "app" } = req.body;
+    const { items, address, couponCode, source, paymentMethod = "cod", platform = "web" } = req.body;
+    if (!["cod", "vnpay"].includes(paymentMethod)) throw new Error("Phương thức thanh toán không hợp lệ");
+    const ownedAddress = await Address.findOne({ _id: address, userId }).session(session);
+    if (!ownedAddress) throw new Error("Địa chỉ giao hàng không hợp lệ");
+    const shippingFee = await getShippingFeeValue(session);
 
     if (!items?.length) throw new Error("Giỏ hàng trống");
 
     const productIds = items.map(i => i.productId);
     const products = await Product.find({ _id: { $in: productIds } }).populate("salePercent").session(session);
+    const specials = await Special.find({ _id: { $in: productIds } }).populate("salePercent").session(session);
 
     let subTotal = 0;
     const orderItems = [];
     const now = new Date();
 
     for (const item of items) {
-      const product = products.find(p => p._id.toString() === item.productId);
+      const product = products.find(p => p._id.toString() === item.productId)
+        || specials.find(p => p._id.toString() === item.productId);
+      const itemType = product?.constructor.modelName === "Special" ? "Special" : "Product";
       if (!product) throw new Error(`Sản phẩm ID ${item.productId} không tồn tại`);
       if (product.stock < item.quantity) throw new Error(`Sản phẩm ${product.name} không đủ tồn kho`);
 
@@ -51,6 +61,7 @@ export const createOrder = async (req, res) => {
       subTotal += finalPrice * item.quantity;
       orderItems.push({
         productId: product._id,
+        itemType,
         productName: product.name,
         productImage: product.images || "",
         originalPrice: product.price,
@@ -59,11 +70,15 @@ export const createOrder = async (req, res) => {
         quantity: item.quantity
       });
 
-      await Product.updateOne(
-        { _id: product._id },
+      const ItemModel = itemType === "Special" ? Special : Product;
+      const stockUpdate = await ItemModel.updateOne(
+        { _id: product._id, stock: { $gte: item.quantity }, isActive: true },
         { $inc: { stock: -item.quantity, soldCount: item.quantity } },
         { session }
       );
+      if (stockUpdate.modifiedCount !== 1) {
+        throw new Error(`Sản phẩm ${product.name} vừa hết hàng`);
+      }
     }
 
     let couponCodeUsed = null;
@@ -75,7 +90,8 @@ export const createOrder = async (req, res) => {
         code: couponCode, 
         items: orderItems, 
         totalAmount: subTotal,
-        userId
+        userId,
+        session
       });
 
       couponCodeUsed = couponResult.couponCode;
@@ -100,16 +116,27 @@ export const createOrder = async (req, res) => {
       couponCode: couponCodeUsed,
       couponDiscount,
       totalPrice: finalTotalPrice,
+      shippingFee,
       address,
       source,
       paymentMethod,
-      paymentStatus: finalTotalPrice === 0 ? "paid" : "pending"
+      paymentStatus: finalTotalPrice === 0 ? "paid" : "pending",
+      paymentExpiresAt: paymentMethod === "vnpay" ? new Date(Date.now() + 15 * 60 * 1000) : null
     }], { session });
 
     const itemsWithOrderId = orderItems.map(i => ({ ...i, orderId: order._id }));
     await OrderItem.insertMany(itemsWithOrderId, { session });
+    await Transaction.create([{
+      orderId: order._id,
+      userId,
+      amount: finalTotalPrice,
+      currency: "VND",
+      paymentMethod,
+      status: finalTotalPrice === 0 ? "completed" : "pending",
+      ipAddress: req.ip,
+    }], { session });
 
-    if (source === "cart") {
+    if (source === "cart" && (paymentMethod === "cod" || finalTotalPrice === 0)) {
       const cart = await Cart.findOne({ userId }).session(session);
       if (cart) {
         await CartItems.deleteMany({ cartId: cart._id, productId: { $in: productIds } }, { session });
@@ -119,6 +146,25 @@ export const createOrder = async (req, res) => {
     await session.commitTransaction();
     isCommitted = true;
     session.endSession();
+
+    let paymentUrl;
+    if (finalTotalPrice > 0 && paymentMethod === "vnpay") {
+      try {
+        paymentUrl = await createPaymentUrl({
+          orderId: order._id,
+          amount: finalTotalPrice,
+          ip: req.ip,
+          platform,
+        });
+      } catch (paymentError) {
+        try {
+          await releasePendingOrderInventory(order._id, "payment_url_creation_failed");
+        } catch (releaseError) {
+          console.error("Failed to release inventory after VNPay URL error:", releaseError.message);
+        }
+        throw new Error(`Không thể khởi tạo thanh toán VNPay: ${paymentError.message}`);
+      }
+    }
 
     try {
       const newBehavior = await UserBehavior.create({
@@ -152,13 +198,6 @@ export const createOrder = async (req, res) => {
         data: { orderId: order._id, totalPrice: finalTotalPrice }
       });
     } else {
-      const paymentUrl = await createPaymentUrl({
-        orderId: order._id,
-        amount: finalTotalPrice,
-        ip: req.ip,
-        platform: platform 
-      });
-      
       return res.status(201).json({
         success: true,
         data: { orderId: order._id, totalPrice: finalTotalPrice, paymentUrl }
@@ -171,6 +210,55 @@ export const createOrder = async (req, res) => {
     return res.status(500).json({ success: false, message: err.message });
   }
 };
+export const releasePendingOrderInventory = async (orderId, reason = "payment_failed") => {
+  const releaseSession = await mongoose.startSession();
+  try {
+    return await releaseSession.withTransaction(async () => {
+      const order = await Order.findOneAndUpdate(
+        { _id: orderId, paymentStatus: "pending", inventoryReleasedAt: null },
+        {
+          paymentStatus: "failed",
+          status: "cancelled",
+          cancelledAt: new Date(),
+          cancelReason: reason,
+          inventoryReleasedAt: new Date(),
+        },
+        { new: true, session: releaseSession },
+      );
+      if (!order) return false;
+      const items = await OrderItem.find({ orderId }).session(releaseSession);
+      for (const item of items) {
+        const ItemModel = item.itemType === "Special" ? Special : Product;
+        await ItemModel.updateOne(
+          { _id: item.productId },
+          { $inc: { stock: item.quantity, soldCount: -item.quantity } },
+          { session: releaseSession },
+        );
+      }
+      await Transaction.updateOne(
+        { orderId },
+        { status: "failed", "gatewayDetails.responseCode": reason },
+        { session: releaseSession },
+      );
+      return true;
+    });
+  } finally {
+    await releaseSession.endSession();
+  }
+};
+
+export const expirePendingPayments = async () => {
+  const orders = await Order.find({
+    paymentMethod: "vnpay",
+    paymentStatus: "pending",
+    paymentExpiresAt: { $lte: new Date() },
+    inventoryReleasedAt: null,
+  }).select("_id").limit(100);
+  for (const order of orders) {
+    await releasePendingOrderInventory(order._id, "payment_expired");
+  }
+};
+
 export const vnpayIPN = async (req, res) => {
   try {
     res.setHeader('ngrok-skip-browser-warning', 'true');
@@ -208,7 +296,13 @@ export const vnpayIPN = async (req, res) => {
       return res.status(200).json({ RspCode: '01', Message: 'Order not found' });
     }
 
-    console.log(`Current Order Status: Payment=${order.paymentStatus}, Status=${order.status}`);
+    const paidAmount = Number(vnp_Params["vnp_Amount"]) / 100;
+    if (!Number.isFinite(paidAmount) || paidAmount !== order.totalPrice) {
+      return res.status(200).json({ RspCode: "04", Message: "Invalid amount" });
+    }
+    if (process.env.VNP_TMN_CODE && vnp_Params["vnp_TmnCode"] !== process.env.VNP_TMN_CODE) {
+      return res.status(200).json({ RspCode: "97", Message: "Invalid merchant" });
+    }
 
     if (order.paymentStatus !== 'pending') {
       console.warn("⚠️ Warning: Order was already processed (Not in pending status)");
@@ -218,22 +312,31 @@ export const vnpayIPN = async (req, res) => {
     if (rspCode === '00') {
       console.log("💰 Payment Success (Code 00). Updating Database...");
       
+      const paymentSession = await mongoose.startSession();
+      paymentSession.startTransaction();
+      try {
       if (order.couponCode) {
-        const coupon = await Coupons.findOne({ code: order.couponCode });
+        const coupon = await Coupons.findOne({ code: order.couponCode }).session(paymentSession);
         if (coupon) {
-          await Coupons.updateOne({ _id: coupon._id }, { $inc: { usedCount: 1 } });
+          const couponUpdate = await Coupons.updateOne(
+            { _id: coupon._id, usedCount: { $lt: coupon.usageLimit } },
+            { $inc: { usedCount: 1 } },
+            { session: paymentSession },
+          );
+          if (couponUpdate.modifiedCount !== 1) throw new Error("Coupon usage limit reached");
           await UserCoupon.updateOne(
             { userId: order.userId, couponId: coupon._id }, 
-            { $set: { isUsed: true, usedAt: new Date() } }
+            { $set: { isUsed: true, usedAt: new Date() } },
+            { session: paymentSession }
           );
           console.log("✅ Coupon marked as used");
         }
       }
 
-      const updatedOrder = await Order.findByIdAndUpdate(
-        orderId, 
+      const updatedOrder = await Order.findOneAndUpdate(
+        { _id: orderId, paymentStatus: "pending", inventoryReleasedAt: null },
         { paymentStatus: 'paid', status: 'pending', paidAt: new Date() },
-        { new: true } 
+        { new: true, session: paymentSession }
       );
 
 
@@ -248,14 +351,38 @@ export const vnpayIPN = async (req, res) => {
             payDate: vnp_Params['vnp_PayDate'] 
           } 
         }, 
-        { upsert: true }
+        { session: paymentSession }
       );
+      if (!updatedOrder) throw new Error("Order already processed");
+
+      if (order.source === "cart") {
+        const cart = await Cart.findOne({ userId: order.userId }).session(paymentSession);
+        if (cart) {
+          const paidItems = await OrderItem.find({ orderId: order._id })
+            .select("productId")
+            .session(paymentSession);
+          await CartItems.deleteMany(
+            {
+              cartId: cart._id,
+              productId: { $in: paidItems.map((item) => item.productId) },
+            },
+            { session: paymentSession },
+          );
+        }
+      }
+      await paymentSession.commitTransaction();
+      } catch (paymentError) {
+        await paymentSession.abortTransaction();
+        throw paymentError;
+      } finally {
+        await paymentSession.endSession();
+      }
       console.log("✅ Transaction record created/updated");
 
       return res.status(200).json({ RspCode: '00', Message: 'Success' });
     } else {
       console.warn(`❌ Payment Failed/Cancelled. Code: ${rspCode}`);
-      await Order.findByIdAndUpdate(orderId, { paymentStatus: 'failed' });
+      await releasePendingOrderInventory(orderId, `vnpay_${rspCode}`);
       console.log("======= [VNPAY IPN END - FAILED] =======");
       return res.status(200).json({ RspCode: '00', Message: 'Success' });
     }
@@ -455,7 +582,8 @@ export const cancelOrder = async (req, res) => {
 
     const orderItems = await OrderItem.find({ orderId: order._id }).session(session);
     for (const item of orderItems) {
-      await Product.updateOne(
+      const ItemModel = item.itemType === "Special" ? Special : Product;
+      await ItemModel.updateOne(
         { _id: item.productId },
         { $inc: { stock: item.quantity, soldCount: -item.quantity } },
         { session }

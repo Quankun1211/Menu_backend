@@ -17,15 +17,15 @@ export const generateRandomCode = (length = 10) => {
     return result;
 };
 
-export const validateAndCalculateCoupon = async ({ code, items, totalAmount, userId }) => {
+export const validateAndCalculateCoupon = async ({ code, items, totalAmount, userId, session }) => {
   const coupon = await Coupons.findOne({
     code: code.toUpperCase(),
     isActive: true,
-  });
+  }).session(session || null);
 
   if (!coupon) throw new Error("Mã giảm giá không tồn tại");
 
-  const userCoupon = await UserCoupon.findOne({ userId, couponId: coupon._id });
+  const userCoupon = await UserCoupon.findOne({ userId, couponId: coupon._id }).session(session || null);
   if (!userCoupon) throw new Error("Bạn không sở hữu mã này trong ví");
   if (userCoupon.isUsed) throw new Error("Mã này đã được bạn sử dụng");
 

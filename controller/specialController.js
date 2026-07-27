@@ -2,6 +2,7 @@ import slugify from "slugify";
 import { Special } from "../models/specialModel.js";
 import cloudinary from "../config/cloudinary.js";
 import { getOrSetCache } from "../utils/redis.utils.js";
+import mongoose from "mongoose";
 export const createSpecialProduct = async (req, res) => {
   try {
     const {
@@ -187,5 +188,136 @@ export const getProductsSpecialByRegion = async (req, res) => {
       code: 500,
       message: "Internal server error",
     });
+  }
+};
+
+export const getSpecialDetail = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const identifierMatch = mongoose.Types.ObjectId.isValid(id)
+      ? { _id: new mongoose.Types.ObjectId(id) }
+      : { slug: id };
+
+    const now = new Date();
+    const specials = await Special.aggregate([
+      { $match: { ...identifierMatch, isActive: true } },
+      {
+        $lookup: {
+          from: "saleitems",
+          localField: "salePercent",
+          foreignField: "_id",
+          as: "sale",
+        },
+      },
+      { $unwind: { path: "$sale", preserveNullAndEmptyArrays: true } },
+      {
+        $lookup: {
+          from: "recipes",
+          let: { specialId: "$_id" },
+          pipeline: [
+            {
+              $match: {
+                isDeleted: false,
+                $expr: {
+                  $gt: [
+                    {
+                      $size: {
+                        $filter: {
+                          input: "$ingredients",
+                          as: "ingredient",
+                          cond: {
+                            $and: [
+                              { $eq: ["$$ingredient.itemType", "Special"] },
+                              { $eq: ["$$ingredient.ingredientId", "$$specialId"] },
+                            ],
+                          },
+                        },
+                      },
+                    },
+                    0,
+                  ],
+                },
+              },
+            },
+            { $project: { name: 1, slug: 1, image: 1, cookTime: 1 } },
+          ],
+          as: "relatedRecipes",
+        },
+      },
+      {
+        $addFields: {
+          salePercent: {
+            $cond: [
+              { $ifNull: ["$sale", false] },
+              {
+                percent: "$sale.percent",
+                startDate: "$sale.startDate",
+                endDate: "$sale.endDate",
+              },
+              null,
+            ],
+          },
+          finalPrice: {
+            $cond: [
+              {
+                $and: [
+                  { $ifNull: ["$sale.percent", false] },
+                  { $lte: ["$sale.startDate", now] },
+                  { $gte: ["$sale.endDate", now] },
+                ],
+              },
+              {
+                $multiply: [
+                  "$price",
+                  { $divide: [{ $subtract: [100, "$sale.percent"] }, 100] },
+                ],
+              },
+              "$price",
+            ],
+          },
+          itemType: "Special",
+        },
+      },
+      { $project: { sale: 0 } },
+    ]);
+
+    if (!specials[0]) {
+      return res.status(404).json({ code: 404, message: "Special not found" });
+    }
+    return res.status(200).json({ code: 200, data: specials[0] });
+  } catch (error) {
+    console.error("getSpecialDetail error:", error);
+    return res.status(500).json({ code: 500, message: "Internal server error" });
+  }
+};
+
+export const getLatestSpecial = async (req, res) => {
+  try {
+    const special = await Special.findOne({ isActive: true })
+      .populate("salePercent")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    if (!special) {
+      return res.status(404).json({ code: 404, message: "Special not found" });
+    }
+
+    const now = new Date();
+    const sale = special.salePercent;
+    const hasSale = sale && now >= new Date(sale.startDate) && now <= new Date(sale.endDate);
+    return res.status(200).json({
+      code: 200,
+      data: {
+        ...special,
+        salePercent: hasSale ? sale : null,
+        finalPrice: hasSale
+          ? Math.round(special.price * (100 - sale.percent) / 100)
+          : special.price,
+        itemType: "Special",
+      },
+    });
+  } catch (error) {
+    console.error("getLatestSpecial error:", error);
+    return res.status(500).json({ code: 500, message: "Internal server error" });
   }
 };

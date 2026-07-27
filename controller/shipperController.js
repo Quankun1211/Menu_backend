@@ -389,7 +389,7 @@ export const updateShipperLocation = async (req, res) => {
     { new: true }
   );
 
-  req.app.get('io').to(orderId).emit('live_update', {
+  req.app.get('io').to(`order:${orderId}`).emit('live_update', {
     latitude: parseFloat(latitude),
     longitude: parseFloat(longitude)
   });
