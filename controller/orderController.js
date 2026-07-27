@@ -406,16 +406,27 @@ export const vnpayReturn = async (req, res) => {
 export const getMyOrders = async (req, res) => {
   try {
     const userId = req.user.id;
+    const currentPage = Number(req.query.page || 1);
+    const pageSize = Number(req.query.limit || 10);
+    const skip = (currentPage - 1) * pageSize;
+    const filter = { userId };
+    if (req.query.status && req.query.status !== "all") filter.status = req.query.status;
 
-    const orders = await Order.find({ userId })
-      .populate("address")
-      .sort({ createdAt: -1 })
-      .lean();
+    const [orders, totalItems] = await Promise.all([
+      Order.find(filter)
+        .populate("address")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(pageSize)
+        .lean(),
+      Order.countDocuments(filter),
+    ]);
 
     if (!orders.length) {
       return res.status(200).json({
         code: 200,
-        data: []
+        data: [],
+        pagination: { totalItems: 0, totalPages: 0, currentPage, pageSize, hasNextPage: false },
       });
     }
 
@@ -479,7 +490,14 @@ export const getMyOrders = async (req, res) => {
 
     return res.status(200).json({
       code: 200,
-      data: result
+      data: result,
+      pagination: {
+        totalItems,
+        totalPages: Math.ceil(totalItems / pageSize),
+        currentPage,
+        pageSize,
+        hasNextPage: currentPage * pageSize < totalItems,
+      },
     });
 
   } catch (err) {

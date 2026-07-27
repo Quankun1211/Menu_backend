@@ -89,5 +89,6 @@ test("query validation converts and caps pagination", async () => {
   assert.equal(valid.body.limit, 25);
   assert.equal((await request(app).get("/pagination?region=all&sort=newest")).status, 200);
   assert.equal((await request(app).get("/pagination?region=bac&sort=sold_desc")).status, 200);
+  assert.equal((await request(app).get("/pagination?categoryId=all&page=1&limit=12")).status, 200);
   assert.equal((await request(app).get("/pagination?limit=1000")).status, 400);
 });

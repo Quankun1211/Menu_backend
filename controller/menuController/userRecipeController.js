@@ -100,6 +100,13 @@ export const getRecipes = async (req, res) => {
       data: recipes,
       totalPages: Math.ceil(count / Number(limit)),
       currentPage: Number(page),
+      pagination: {
+        totalItems: count,
+        totalPages: Math.ceil(count / Number(limit)),
+        currentPage: Number(page),
+        pageSize: Number(limit),
+        hasNextPage: Number(page) * Number(limit) < count,
+      },
     });
   } catch (error) {
     res.status(500).json({ 

@@ -44,21 +44,28 @@ export const addToFavourite = async (req, res) => {
 export const getFavourite = async (req, res) => {
   try {
     const userId = req.user.id;
+    const currentPage = Number(req.query.page || 1);
+    const pageSize = Number(req.query.limit || 10);
+    const skip = (currentPage - 1) * pageSize;
 
     const favourite = await Favourite.findOne({ userId });
     if (!favourite) {
       return res.status(200).json({
         code: 200,
         data: [],
+        pagination: { totalItems: 0, totalPages: 0, currentPage, pageSize, hasNextPage: false },
       });
     }
 
-    const items = await FavouriteItem.aggregate([
+    const match = { favouriteId: new mongoose.Types.ObjectId(favourite._id) };
+    const [items, totalItems] = await Promise.all([
+      FavouriteItem.aggregate([
       {
-        $match: {
-          favouriteId: new mongoose.Types.ObjectId(favourite._id),
-        },
+        $match: match,
       },
+      { $sort: { createdAt: -1 } },
+      { $skip: skip },
+      { $limit: pageSize },
 
       {
         $lookup: {
@@ -125,11 +132,20 @@ export const getFavourite = async (req, res) => {
           createdAt: 1,
         },
       },
+      ]),
+      FavouriteItem.countDocuments(match),
     ]);
 
     return res.status(200).json({
       code: 200,
       data: items,
+      pagination: {
+        totalItems,
+        totalPages: Math.ceil(totalItems / pageSize),
+        currentPage,
+        pageSize,
+        hasNextPage: currentPage * pageSize < totalItems,
+      },
     });
   } catch (error) {
     console.error("Get favourite error:", error);

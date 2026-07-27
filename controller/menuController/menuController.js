@@ -92,11 +92,14 @@ export const createMenu = async (req, res) => {
 
 export const getMenus = async (req, res) => {
     try {
-        const { categoryId } = req.query;
+        const { categoryId, page = 1, limit = 12 } = req.query;
+        const currentPage = Number(page);
+        const pageSize = Number(limit);
+        const skip = (currentPage - 1) * pageSize;
         
-        const cacheKey = `menus:list:${categoryId || 'all'}`;
+        const cacheKey = `menus:list:${categoryId || 'all'}:p:${currentPage}:l:${pageSize}`;
 
-        const updatedMenus = await getOrSetCache(cacheKey, async () => {
+        const result = await getOrSetCache(cacheKey, async () => {
             let filter = { isDeleted: false };
 
             if (categoryId && categoryId !== 'all' && categoryId !== 'undefined') {
@@ -106,7 +109,8 @@ export const getMenus = async (req, res) => {
                 filter.category = new mongoose.Types.ObjectId(categoryId);
             }
 
-            const menus = await Menu.find(filter)
+            const [menus, totalItems] = await Promise.all([
+              Menu.find(filter)
                 .populate({
                     path: 'recipes',
                     match: { isDeleted: false },
@@ -116,9 +120,13 @@ export const getMenus = async (req, res) => {
                 })
                 .populate('category')
                 .sort({ createdAt: -1 })
-                .lean();
+                .skip(skip)
+                .limit(pageSize)
+                .lean(),
+              Menu.countDocuments(filter),
+            ]);
 
-            return menus.map(menu => {
+            const items = menus.map(menu => {
                 let totalPriceAll = 0;
                 let totalPriceInDB = 0;
 
@@ -147,12 +155,20 @@ export const getMenus = async (req, res) => {
                     totalPriceInDB: Math.round(totalPriceInDB)
                 };
             });
+            return { items, totalItems };
         });
 
         return res.status(200).json({
             code: 200,
-            count: updatedMenus.length,
-            data: updatedMenus,
+            count: result.items.length,
+            data: result.items,
+            pagination: {
+              totalItems: result.totalItems,
+              totalPages: Math.ceil(result.totalItems / pageSize),
+              currentPage,
+              pageSize,
+              hasNextPage: currentPage * pageSize < result.totalItems,
+            },
         });
     } catch (error) {
         if (error.message === "INVALID_ID") {

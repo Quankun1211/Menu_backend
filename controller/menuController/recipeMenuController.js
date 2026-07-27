@@ -158,22 +158,31 @@ export const getRecipeDetail = async (req, res) => {
 };
 export const getRecipesByCategory = async (req, res) => {
   try {
-    const { categoryId } = req.query;
+    const { categoryId, page = 1, limit = 12 } = req.query;
     const userId = req.user?.id;
+    const currentPage = Number(page);
+    const pageSize = Number(limit);
+    const skip = (currentPage - 1) * pageSize;
 
-    const cacheKey = `recipes:list:${categoryId || 'all'}`;
+    const cacheKey = `recipes:list:${categoryId || 'all'}:p:${currentPage}:l:${pageSize}`;
 
-    const recipes = await getOrSetCache(cacheKey, async () => {
+    const result = await getOrSetCache(cacheKey, async () => {
       let filter = { isDeleted: false };
       if (categoryId && categoryId !== 'all') {
         filter.category = categoryId;
       }
 
-      return await Recipe.find(filter)
-        .populate("ingredients.ingredientId", "name customName image images")
-        .populate("category")
-        .sort({ createdAt: -1 })
-        .lean();
+      const [recipes, totalItems] = await Promise.all([
+        Recipe.find(filter)
+          .populate("ingredients.ingredientId", "name customName image images")
+          .populate("category")
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(pageSize)
+          .lean(),
+        Recipe.countDocuments(filter),
+      ]);
+      return { recipes, totalItems };
     });
 
     let savedRecipeIds = [];
@@ -184,7 +193,7 @@ export const getRecipesByCategory = async (req, res) => {
       }
     }
 
-    const formattedRecipes = recipes.map(recipe => {
+    const formattedRecipes = result.recipes.map(recipe => {
       const extraInfo = [];
 
       if (recipe.tips?.nutrition) {
@@ -212,6 +221,13 @@ export const getRecipesByCategory = async (req, res) => {
       success: true,
       count: formattedRecipes.length,
       data: formattedRecipes,
+      pagination: {
+        totalItems: result.totalItems,
+        totalPages: Math.ceil(result.totalItems / pageSize),
+        currentPage,
+        pageSize,
+        hasNextPage: currentPage * pageSize < result.totalItems,
+      },
     });
   } catch (error) {
     console.error("Get recipes error:", error.message);
@@ -388,12 +404,9 @@ export const getSavedRecipes = async (req, res) => {
       });
     }
 
-    const user = await User.findById(req.user.id)
-      .populate({
-        path: "savedRecipes",
-        select: "name image cookTime difficulty description", 
-      })
-      .lean();
+    const currentPage = Number(req.query.page || 1);
+    const pageSize = Number(req.query.limit || 10);
+    const user = await User.findById(req.user.id).select("savedRecipes").lean();
 
     if (!user) {
       return res.status(404).json({ 
@@ -402,9 +415,29 @@ export const getSavedRecipes = async (req, res) => {
       });
     }
 
+    const totalItems = user.savedRecipes?.length || 0;
+    const recipeIds = (user.savedRecipes || []).slice(
+      (currentPage - 1) * pageSize,
+      currentPage * pageSize,
+    );
+    const recipes = await Recipe.find({ _id: { $in: recipeIds }, isDeleted: false })
+      .select("name image cookTime difficulty description slug")
+      .lean();
+    const recipeMap = new Map(recipes.map((recipe) => [recipe._id.toString(), recipe]));
+    const orderedRecipes = recipeIds
+      .map((id) => recipeMap.get(id.toString()))
+      .filter(Boolean);
+
     res.status(200).json({
       success: true,
-      data: user.savedRecipes || []
+      data: orderedRecipes,
+      pagination: {
+        totalItems,
+        totalPages: Math.ceil(totalItems / pageSize),
+        currentPage,
+        pageSize,
+        hasNextPage: currentPage * pageSize < totalItems,
+      },
     });
   } catch (error) {
     console.error("DETAILED ERROR:", error);

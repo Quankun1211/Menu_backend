@@ -90,11 +90,14 @@ export const createSpecialProduct = async (req, res) => {
 
 export const getProductsSpecialByRegion = async (req, res) => {
   try {
-    const { region, sort = "newest" } = req.query;
+    const { region, sort = "newest", page = 1, limit = 12 } = req.query;
+    const currentPage = Number(page);
+    const pageSize = Number(limit);
+    const skip = (currentPage - 1) * pageSize;
 
-    const cacheKey = `products:special_model:region:${region || 'all'}:sort:${sort}`;
+    const cacheKey = `products:special_model:region:${region || 'all'}:sort:${sort}:p:${currentPage}:l:${pageSize}`;
 
-    const products = await getOrSetCache(cacheKey, async () => {
+    const result = await getOrSetCache(cacheKey, async () => {
       const match = {
         isActive: true
       };
@@ -115,7 +118,8 @@ export const getProductsSpecialByRegion = async (req, res) => {
 
       const now = new Date();
 
-      return await Special.aggregate([
+      const [products, totalItems] = await Promise.all([
+        Special.aggregate([
         { $match: match },
         {
           $lookup: {
@@ -167,11 +171,16 @@ export const getProductsSpecialByRegion = async (req, res) => {
           },
         },
         { $sort: sortMap[sort] || sortMap.newest },
+        { $skip: skip },
+        { $limit: pageSize },
         { $project: { sale: 0 } },
+        ]),
+        Special.countDocuments(match),
       ]);
+      return { products, totalItems };
     }, 1800); 
 
-    if (products === null) {
+    if (result === null) {
       return res.status(400).json({
         code: 400,
         message: "Region must be bac | trung | nam | all",
@@ -180,7 +189,14 @@ export const getProductsSpecialByRegion = async (req, res) => {
 
     return res.status(200).json({
       code: 200,
-      data: products,
+      data: result.products,
+      pagination: {
+        totalItems: result.totalItems,
+        totalPages: Math.ceil(result.totalItems / pageSize),
+        currentPage,
+        pageSize,
+        hasNextPage: currentPage * pageSize < result.totalItems,
+      },
     });
   } catch (error) {
     console.error("getProductsSpecialByRegion error:", error);
