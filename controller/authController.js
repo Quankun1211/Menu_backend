@@ -220,23 +220,28 @@ export const resetPassword = async (req, res) => {
 export const login = async (req, res) => {
     try {
         const {username, password} = req.body
+        const identifier = username.trim().toLowerCase()
         const user = await User.findOne({
             $or: [
-                {username: username},
-                {email: username}
+                {username: identifier},
+                {email: identifier}
             ]
         })
 
         if(!user) {
-            return res.status(200).json({error: "Username or email is not exits!"})
+            return res.status(401).json({error: "Tên đăng nhập/email hoặc mật khẩu không đúng"})
         }
 
         const isPasswordCorrect = await bcryptjs.compare(password, user.password || "")
         if(!isPasswordCorrect) {
-            return res.status(400).json({error: "Invalid password"})
+            return res.status(401).json({error: "Tên đăng nhập/email hoặc mật khẩu không đúng"})
         }
-        if (!user.isVerified || !user.isActive) {
-          return res.status(403).json({ error: "Tài khoản chưa xác minh hoặc đã bị khóa" });
+        if (!user.isVerified) {
+          return res.status(403).json({ error: "Tài khoản chưa được xác minh" });
+        }
+        // Older accounts may not have isActive. Only an explicit false means locked.
+        if (user.isActive === false) {
+          return res.status(403).json({ error: "Tài khoản đã bị khóa" });
         }
         const session = await issueSession(user, res, req)
         console.log("Login ok");
@@ -311,7 +316,9 @@ export const refreshAccessToken = async (req, res) => {
       return res.status(401).json({ error: "Refresh token reuse detected" });
     }
     const user = await User.findById(decoded.userId);
-    if (!user?.isActive || !user.isVerified) return res.status(401).json({ error: "Account is unavailable" });
+    if (!user || user.isActive === false || !user.isVerified) {
+      return res.status(401).json({ error: "Account is unavailable" });
+    }
     const rotated = await issueSession(user, res, req, decoded.familyId);
     session.revokedAt = new Date();
     session.replacedByHash = hashToken(rotated.jti);

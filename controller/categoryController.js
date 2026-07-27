@@ -1,7 +1,7 @@
 import slugify from "slugify"
 import {Category} from "../models/categoriesModel.js"
 import cloudinary from "../config/cloudinary.js"
-import { getOrSetCache } from "../utils/redis.utils.js";
+import { clearCache, getOrSetCache } from "../utils/redis.utils.js";
 export const createCategories = async (req, res) => {
   try {
     const { name } = req.body;
@@ -30,6 +30,8 @@ export const createCategories = async (req, res) => {
       slug,
       image: imageUrl,
     });
+
+    await clearCache(["categories:product:*", "products:*"]);
 
     return res.status(201).json({
       code: 201,

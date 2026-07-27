@@ -6,7 +6,7 @@ import request from "supertest";
 import { authorizeRole } from "../middleware/protectRoute.js";
 import { csrfProtection } from "../middleware/csrf.js";
 import { validate } from "../middleware/validate.js";
-import { orderSchema, paginationQuery } from "../validation/schemas.js";
+import { orderSchema, paginationQuery, shippingFeeSchema } from "../validation/schemas.js";
 import { validateRequestEnvelope } from "../middleware/requestEnvelope.js";
 import { getCsrfToken } from "../controller/authController.js";
 
@@ -24,6 +24,7 @@ app.post(
 );
 app.post("/order", validate(orderSchema), (_req, res) => res.status(201).json({ ok: true }));
 app.get("/pagination", validate(paginationQuery, "query"), (req, res) => res.json(req.query));
+app.put("/shipping", validate(shippingFeeSchema), (req, res) => res.json(req.body));
 
 test("CSRF blocks mutation without matching cookie and header", async () => {
   const response = await request(app).post("/mutate").send({});
@@ -91,4 +92,12 @@ test("query validation converts and caps pagination", async () => {
   assert.equal((await request(app).get("/pagination?region=bac&sort=sold_desc")).status, 200);
   assert.equal((await request(app).get("/pagination?categoryId=all&page=1&limit=12")).status, 200);
   assert.equal((await request(app).get("/pagination?limit=1000")).status, 400);
+});
+
+test("shipping fee validation accepts free shipping and rejects invalid values", async () => {
+  const freeShipping = await request(app).put("/shipping").send({ shippingFee: 0 });
+  assert.equal(freeShipping.status, 200);
+  assert.equal(freeShipping.body.shippingFee, 0);
+  assert.equal((await request(app).put("/shipping").send({ shippingFee: -1 })).status, 400);
+  assert.equal((await request(app).put("/shipping").send({ shippingFee: 10_000_001 })).status, 400);
 });

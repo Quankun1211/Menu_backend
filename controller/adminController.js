@@ -18,6 +18,16 @@ import fs from 'fs';
 
 import { clearCache } from "../utils/redis.utils.js";
 
+const clearCategoryCaches = (type) => {
+  const patternsByType = {
+    product: ["categories:product:*", "products:*"],
+    menu: ["categories:menu:*", "menus:list:*"],
+    recipe: ["categories:recipe:*", "recipes:list:*"],
+  };
+
+  return clearCache(patternsByType[type] || []);
+};
+
 export const registerUser = async (req, res) => {
   try {
     const { name, username, email, password, phone, role } = req.body;
@@ -586,9 +596,8 @@ export const createCategory = async (req, res) => {
 
     const newCategory = await Model.create(createData);
     if (newCategory) {
-        const typeCacheKey = `categories:${type}`;
-        await clearCache(typeCacheKey);
-        console.log(`Redis: Cleared cache for ${type}`);
+        const deletedCount = await clearCategoryCaches(type);
+        console.log(`Redis: Cleared ${deletedCount} cache keys for category type ${type}`);
     }
     return res.status(201).json({
       success: true,
@@ -649,6 +658,9 @@ export const updateCategory = async (req, res) => {
       { new: true, runValidators: true }
     );
 
+    const deletedCount = await clearCategoryCaches(type);
+    console.log(`Redis: Cleared ${deletedCount} cache keys for category type ${type}`);
+
     return res.status(200).json({
       success: true,
       data: updatedCategory,
@@ -682,6 +694,9 @@ export const deleteCategory = async (req, res) => {
         deletedAt: new Date() 
       }
     });
+
+    const deletedCount = await clearCategoryCaches(type);
+    console.log(`Redis: Cleared ${deletedCount} cache keys for category type ${type}`);
 
     return res.status(200).json({
       success: true,
@@ -770,6 +785,7 @@ export const createProduct = async (req, res) => {
     };
     
     const newProduct = await Product.create(productData);
+    await clearCache("products:*");
 
     return res.status(201).json({
       code: 201,
@@ -906,6 +922,11 @@ export const updateProductAdmin = async (req, res) => {
   try {
     const { id } = req.params;
     const updateData = { ...req.body };
+    const currentProduct = await Product.findById(id);
+
+    if (!currentProduct) {
+      return res.status(404).json({ success: false, message: "Không tìm thấy sản phẩm" });
+    }
 
     if (req.body.nutrition) {
       updateData.nutrition = JSON.parse(req.body.nutrition);
@@ -917,9 +938,19 @@ export const updateProductAdmin = async (req, res) => {
       updateData.season = JSON.parse(req.body.season);
     }
 
-    if (req.file) {
-      updateData.image = req.file.path; 
+    if (req.body.name) {
+      updateData.slug = slugify(req.body.name, { lower: true, strict: true });
     }
+
+    if (req.file) {
+      const uploadResult = await cloudinary.uploader.upload(req.file.path, {
+        folder: "products",
+      });
+      updateData.images = uploadResult.secure_url;
+    }
+
+    // Product schema uses `images`; never persist the obsolete singular field.
+    delete updateData.image;
 
     const updatedProduct = await Product.findByIdAndUpdate(
       id,
@@ -927,9 +958,7 @@ export const updateProductAdmin = async (req, res) => {
       { new: true, runValidators: true }
     );
 
-    if (!updatedProduct) {
-      return res.status(404).json({ success: false, message: "Không tìm thấy sản phẩm" });
-    }
+    await clearCache("products:*");
 
     return res.status(200).json({
       success: true,
@@ -970,6 +999,88 @@ export const getProductDetailAdmin = async (req, res) => {
     }
 };
 
+export const getSpecialDetailAdmin = async (req, res) => {
+  try {
+    const special = await Special.findById(req.params.id)
+      .populate("salePercent", "name percent startDate endDate");
+
+    if (!special) {
+      return res.status(404).json({ success: false, message: "Không tìm thấy đặc sản" });
+    }
+
+    return res.status(200).json({ success: true, data: special });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const updateSpecialAdmin = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updateData = { ...req.body };
+    const special = await Special.findById(id);
+
+    if (!special) {
+      return res.status(404).json({ success: false, message: "Không tìm thấy đặc sản" });
+    }
+
+    for (const field of ["nutrition", "usage_instruction"]) {
+      if (req.body[field]) updateData[field] = JSON.parse(req.body[field]);
+    }
+    if (req.body.name) {
+      updateData.slug = slugify(req.body.name, { lower: true, strict: true });
+    }
+    if (req.file) {
+      const uploadResult = await cloudinary.uploader.upload(req.file.path, {
+        folder: "specials",
+      });
+      updateData.images = uploadResult.secure_url;
+    }
+
+    delete updateData.image;
+    delete updateData.isSpecialty;
+    delete updateData.season;
+
+    const updatedSpecial = await Special.findByIdAndUpdate(
+      id,
+      { $set: updateData },
+      { new: true, runValidators: true },
+    );
+
+    await clearCache("products:special_model:*");
+    return res.status(200).json({
+      success: true,
+      message: "Cập nhật đặc sản thành công",
+      data: updatedSpecial,
+    });
+  } catch (error) {
+    console.error("Update Special Error:", error);
+    return res.status(500).json({ success: false, message: "Lỗi server khi cập nhật đặc sản" });
+  }
+};
+
+export const deleteSpecialAdmin = async (req, res) => {
+  try {
+    const special = await Special.findByIdAndUpdate(
+      req.params.id,
+      { isActive: false },
+      { new: true },
+    );
+    if (!special) {
+      return res.status(404).json({ success: false, message: "Không tìm thấy đặc sản" });
+    }
+
+    await clearCache("products:special_model:*");
+    return res.status(200).json({
+      success: true,
+      message: "Đã ngừng kinh doanh đặc sản",
+      data: special,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 export const deleteProductAdmin = async (req, res) => {
     try {
         const { id } = req.params;
@@ -986,6 +1097,8 @@ export const deleteProductAdmin = async (req, res) => {
                 message: "Không tìm thấy sản phẩm"
             });
         }
+
+        await clearCache("products:*");
 
         return res.status(200).json({
             success: true,
@@ -1315,6 +1428,7 @@ export const updateRecipeAdmin = async (req, res) => {
         }
 
         await recipe.save();
+        await clearCache("recipes:list:*");
 
         return res.status(200).json({
             success: true,
@@ -1396,7 +1510,7 @@ export const getAllMenus = async (req, res) => {
     return res.status(200).json({
       success: true,
       data: menus,
-      pagination: {
+      meta: {
         total,
         page: Number(page),
         limit: Number(limit),
@@ -1578,6 +1692,7 @@ export const updateMenu = async (req, res) => {
         }
 
         const updatedMenu = await Menu.findByIdAndUpdate(id, updateData, { new: true });
+        await clearCache("menus:list:*");
 
         return res.status(200).json({
             success: true,

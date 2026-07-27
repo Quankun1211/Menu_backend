@@ -28,7 +28,7 @@ export const paginationQuery = Joi.object({
   categoryId: Joi.alternatives().try(objectId, Joi.string().valid("all")),
 }).unknown(true);
 export const loginSchema = Joi.object({
-  username: Joi.string().trim().min(3).max(254).required(),
+  username: Joi.string().trim().lowercase().min(3).max(254).required(),
   password: Joi.string().min(6).max(128).required(),
 });
 export const registerSchema = Joi.object({

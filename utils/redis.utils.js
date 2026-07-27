@@ -36,15 +36,30 @@ export const getOrSetCache = async (key, callback, ttl = 3600) => {
 };
 /**
  * Xóa cache theo pattern (dùng khi cập nhật dữ liệu)
- * @param {string} pattern - Ví dụ: 'categories:*'
+ * @param {string|string[]} pattern - Ví dụ: 'categories:*'
  */
 export const clearCache = async (pattern) => {
     try {
-        const keys = await redisClient.keys(pattern);
-        if (keys.length > 0) {
-            await redisClient.del(keys);
+        const patterns = Array.isArray(pattern) ? pattern : [pattern];
+        let deletedCount = 0;
+
+        // SCAN avoids blocking Redis when the keyspace grows. This is important
+        // for shared Redis instances that also store auth sessions and OTPs.
+        for (const currentPattern of patterns) {
+            for await (const result of redisClient.scanIterator({
+                MATCH: currentPattern,
+                COUNT: 100,
+            })) {
+                const keys = Array.isArray(result) ? result : [result];
+                if (keys.length > 0) {
+                    deletedCount += await redisClient.unlink(keys);
+                }
+            }
         }
+
+        return deletedCount;
     } catch (error) {
         console.error("Clear Cache Error:", error);
+        return 0;
     }
 };

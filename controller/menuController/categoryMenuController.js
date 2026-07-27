@@ -2,7 +2,7 @@ import slugify from "slugify"
 import cloudinary from "../../config/cloudinary.js";
 import { CategoryMenu } from "../../models/menuModels/categoryMenuModel.js";
 import { CategoryRecipe } from "../../models/RecipeModels/categoryRecipeModel.js";
-import { getOrSetCache } from "../../utils/redis.utils.js";
+import { clearCache, getOrSetCache } from "../../utils/redis.utils.js";
 export const createCategoryMenu = async (req, res) => {
   try {
     const { name, title, description } = req.body;
@@ -24,6 +24,8 @@ export const createCategoryMenu = async (req, res) => {
       title,
       description
     });
+
+    await clearCache(["categories:menu:*", "menus:list:*"]);
 
     return res.status(201).json({
       code: 201,
@@ -71,6 +73,8 @@ export const createCategoryRecipe = async (req, res) => {
       slug,
       description
     });
+
+    await clearCache(["categories:recipe:*", "recipes:list:*"]);
 
     return res.status(201).json({
       code: 201,
