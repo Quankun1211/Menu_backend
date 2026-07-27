@@ -19,11 +19,11 @@ export const paginationQuery = Joi.object({
   limit: Joi.number().integer().min(1).max(100).default(10),
   search: Joi.string().trim().max(200),
   q: Joi.string().trim().max(200),
-  sort: Joi.string().valid("newest", "oldest", "price_asc", "price_desc", "popular"),
+  sort: Joi.string().valid("newest", "oldest", "price_asc", "price_desc", "popular", "sold_desc"),
   status: Joi.string().trim().max(50),
   role: Joi.string().valid("user", "shipper", "admin", "super_admin"),
   type: Joi.string().trim().max(50),
-  region: Joi.string().valid("bac", "trung", "nam"),
+  region: Joi.string().valid("all", "bac", "trung", "nam"),
   category: objectId,
   categoryId: objectId,
 }).unknown(true);
