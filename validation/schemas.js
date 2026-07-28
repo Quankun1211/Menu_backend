@@ -30,7 +30,7 @@ export const paginationQuery = Joi.object({
 export const loginSchema = Joi.object({
   username: Joi.string().trim().lowercase().min(3).max(254).required(),
   password: Joi.string().min(6).max(128).required(),
-  clientType: Joi.string().valid("web", "mobile").default("web"),
+  clientType: Joi.string().valid("web", "mobile", "spa").default("web"),
 });
 export const registerSchema = Joi.object({
   name: Joi.string().trim().min(2).max(100).required(),
@@ -59,7 +59,10 @@ export const resetPasswordSchema = Joi.object({
   otp: Joi.string().pattern(/^\d{6}$/).required(),
   newPassword: Joi.string().min(8).max(128).required(),
 });
-export const refreshSchema = Joi.object({ token: Joi.string().max(5000) }).unknown(false);
+export const refreshSchema = Joi.object({
+  token: Joi.string().max(5000),
+  clientType: Joi.string().valid("web", "mobile", "spa"),
+}).unknown(false);
 export const addressSchema = Joi.object({
   name: shortText.min(2).required(),
   phone: Joi.string().pattern(/^(?:\+84|0)\d{9,10}$/).required(),

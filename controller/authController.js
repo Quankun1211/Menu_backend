@@ -256,7 +256,7 @@ export const login = async (req, res) => {
               name: user.name,
               role: user.role,
               csrfToken: session.csrfToken,
-              ...(clientType === "mobile" && {
+              ...(["mobile", "spa"].includes(clientType) && {
                 access_token: session.accessToken,
                 refresh_token: session.refreshToken,
               }),
@@ -328,9 +328,17 @@ export const refreshAccessToken = async (req, res) => {
     session.revokedAt = new Date();
     session.replacedByHash = hashToken(rotated.jti);
     await session.save();
+    const tokenClient = ["mobile", "spa"].includes(req.body?.clientType) || Boolean(req.body?.token);
     return res.status(200).json({
       code: 200,
-      data: { refreshed: true, csrfToken: rotated.csrfToken },
+      data: {
+        refreshed: true,
+        csrfToken: rotated.csrfToken,
+        ...(tokenClient && {
+          access_token: rotated.accessToken,
+          refresh_token: rotated.refreshToken,
+        }),
+      },
     });
   } catch {
     return res.status(401).json({ error: "Invalid or expired refresh token" });
