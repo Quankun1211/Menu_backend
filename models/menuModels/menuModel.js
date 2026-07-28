@@ -5,6 +5,12 @@ const MenuSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  slug: {
+    type: String,
+    required: true,
+    unique: true,
+    trim: true
+  },
   titleBanner: {
     type: String,
     required: true

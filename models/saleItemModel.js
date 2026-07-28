@@ -18,6 +18,6 @@ const saleItemSchema = new mongoose.Schema({
 }, {timestamps: true})
 
 saleItemSchema.index({ percent: -1 })
-saleItemSchema.index({ isActive: 1 })
+saleItemSchema.index({ startDate: 1, endDate: 1 })
 
 export const SaleItem = mongoose.model("saleItems", saleItemSchema)

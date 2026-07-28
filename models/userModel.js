@@ -45,7 +45,6 @@ const userSchema = new mongoose.Schema({
       categoryId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "Category",
-        index: true,
       },
       viewCount: {
         type: Number,
@@ -71,6 +70,13 @@ const userSchema = new mongoose.Schema({
   }
 }, {timestamps: true})
 
-userSchema.index({ "viewHistory.lastViewedAt": -1 });
+userSchema.pre("save", function capViewHistory(next) {
+  if (this.viewHistory?.length > 100) {
+    this.viewHistory = this.viewHistory
+      .sort((left, right) => right.lastViewedAt - left.lastViewedAt)
+      .slice(0, 100);
+  }
+  next();
+});
 
 export const User = mongoose.model("User", userSchema)

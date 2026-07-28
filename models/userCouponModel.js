@@ -7,4 +7,7 @@ const userCouponSchema = new mongoose.Schema({
     acquiredAt: { type: Date, default: Date.now }
 });
 
+userCouponSchema.index({ userId: 1, couponId: 1 }, { unique: true });
+userCouponSchema.index({ userId: 1, isUsed: 1, acquiredAt: -1 });
+
 export const UserCoupon = mongoose.model("UserCoupon", userCouponSchema);

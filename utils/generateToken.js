@@ -56,6 +56,7 @@ export const issueSession = async (user, res, req, familyId = crypto.randomUUID(
     familyId,
     tokenHash: hashToken(jti),
     expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    cleanupAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     userAgent: req?.get?.("user-agent"),
     ipAddress: req?.ip,
   });

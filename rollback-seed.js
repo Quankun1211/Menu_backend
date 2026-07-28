@@ -12,7 +12,6 @@ import { CategoryRecipe } from "./models/RecipeModels/categoryRecipeModel.js";
 import { Recipe } from "./models/menuModels/RecipeModel.js";
 import { CategoryMenu } from "./models/menuModels/categoryMenuModel.js";
 import { Menu } from "./models/menuModels/menuModel.js";
-import { Story } from "./models/storiesModel.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const seedSource = fs.readFileSync(path.join(__dirname, "seed.js"), "utf8");
@@ -53,19 +52,6 @@ const seededMenuCategoryNames = quotedValues(
 const seededMenuNames = quotedValues(
   section("const menuNames = [", "function cookingInstructions"),
 );
-const storyThemes = [
-  "Bí quyết nêm nếm",
-  "Nguồn gốc và câu chuyện",
-  "Cách chọn nguyên liệu",
-  "Mẹo sơ chế tại nhà",
-  "Giá trị dinh dưỡng",
-  "Cách bày món đẹp",
-  "Kinh nghiệm giữ đúng vị",
-  "Gợi ý mâm cơm kết hợp",
-  "Cách bảo quản an toàn",
-  "Văn hóa thưởng thức",
-];
-
 const promotionBaseDate = new Date("2026-01-01T00:00:00.000Z");
 const promotionEndDate = new Date("2027-12-31T23:59:59.000Z");
 const promotionFilters = Array.from({ length: 15 }, (_, index) => ({
@@ -83,10 +69,6 @@ async function buildTargets(session) {
   const productIds = products.map((item) => item._id);
 
   return {
-    stories: {
-      relatedProducts: { $in: productIds },
-      title: { $regex: `^(${storyThemes.join("|")}) cho ` },
-    },
     menus: { title: { $in: seededMenuNames } },
     recipes: {
       slug: { $in: seededProductNames.map((name) => slug(`Cách làm ${name}`)) },
@@ -106,7 +88,6 @@ async function buildTargets(session) {
 
 async function countTargets(targets, session) {
   return {
-    stories: await Story.countDocuments(targets.stories).session(session),
     menus: await Menu.countDocuments(targets.menus).session(session),
     recipes: await Recipe.countDocuments(targets.recipes).session(session),
     ingredients: await Ingredient.countDocuments(targets.ingredients).session(session),
@@ -122,7 +103,6 @@ async function removeTargets(targets, session) {
   const options = { session };
   const results = {};
 
-  results.stories = (await Story.deleteMany(targets.stories, options)).deletedCount;
   results.menus = (await Menu.deleteMany(targets.menus, options)).deletedCount;
   results.recipes = (await Recipe.deleteMany(targets.recipes, options)).deletedCount;
   results.ingredients = (await Ingredient.deleteMany(targets.ingredients, options)).deletedCount;

@@ -7,4 +7,6 @@ const RewardHistorySchema = new mongoose.Schema({
   receivedAt: { type: Date, default: Date.now }
 });
 
+RewardHistorySchema.index({ userId: 1, levelReached: 1 }, { unique: true });
+
 export const RewardHistory = mongoose.model('RewardHistory', RewardHistorySchema);

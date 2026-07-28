@@ -101,4 +101,14 @@ const orderSchema = new mongoose.Schema({
     }
 }, {timestamps: true})
 
+orderSchema.index({ userId: 1, status: 1, createdAt: -1 });
+orderSchema.index({ shipperId: 1, status: 1, updatedAt: -1 });
+orderSchema.index({ status: 1, createdAt: -1 });
+orderSchema.index({
+    paymentMethod: 1,
+    paymentStatus: 1,
+    paymentExpiresAt: 1,
+    inventoryReleasedAt: 1
+});
+
 export const Order = mongoose.model("Order", orderSchema)

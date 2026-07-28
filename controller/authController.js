@@ -276,7 +276,10 @@ export const logout = async (req, res) => {
             const decoded = jwt.verify(rawRefresh, process.env.JWT_SECRET);
             await AuthSession.updateOne(
               { tokenHash: hashToken(decoded.jti) },
-              { revokedAt: new Date() },
+              {
+                revokedAt: new Date(),
+                cleanupAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+              },
             );
           } catch {}
         }
@@ -316,7 +319,10 @@ export const refreshAccessToken = async (req, res) => {
     if (session.revokedAt) {
       await AuthSession.updateMany(
         { familyId: decoded.familyId, revokedAt: null },
-        { revokedAt: new Date() },
+        {
+          revokedAt: new Date(),
+          cleanupAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        },
       );
       return res.status(401).json({ error: "Refresh token reuse detected" });
     }
@@ -326,6 +332,7 @@ export const refreshAccessToken = async (req, res) => {
     }
     const rotated = await issueSession(user, res, req, decoded.familyId);
     session.revokedAt = new Date();
+    session.cleanupAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
     session.replacedByHash = hashToken(rotated.jti);
     await session.save();
     const tokenClient = ["mobile", "spa"].includes(req.body?.clientType) || Boolean(req.body?.token);

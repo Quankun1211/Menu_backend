@@ -1,6 +1,7 @@
 import { UserBehavior } from "../models/userBehaviorModel.js";
 import axios from "axios";
 import { redisClient } from "../config/redis.js";
+import mongoose from "mongoose";
 export const trackBehavior = (action, targetType) => {
   return async (req, res, next) => {
     next(); 
@@ -9,21 +10,29 @@ export const trackBehavior = (action, targetType) => {
       const userId = req.user?._id;
       const guestId = req.headers['x-guest-id'] || req.ip;
 
-      const targetId = 
+      const rawTarget =
         req.params?.orderId || 
         req.params?.id || 
         req.params?.recipeId || 
-        req.query?.q || 
+        req.query?.categoryId ||
+        req.query?.category ||
         req.body?.productId || 
         req.body?.items?.[0]?.productId || 
         req.body?.orderId;
+      const queryText = action === "search" ? String(req.query?.q || "").trim() : undefined;
+      const targetId = rawTarget && mongoose.isValidObjectId(rawTarget) ? rawTarget : undefined;
 
-      if (targetId) {
+      if (targetId || queryText) {
         const behaviorData = {
           action,
-          targetId: String(targetId),
           targetType,
-          weight: action === 'order' ? 5 : (action === 'search' ? 2 : 1)
+          weight: action === 'order' ? 5 : (action === 'search' ? 2 : 1),
+          ...(targetId && { targetId }),
+          ...(queryText && { queryText }),
+          context: {
+            source: req.body?.source,
+            region: req.query?.region,
+          },
         };
 
         if (userId) {

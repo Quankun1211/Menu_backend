@@ -20,4 +20,6 @@ const LevelRewardSchema = new mongoose.Schema({
   description: String
 });
 
+LevelRewardSchema.index({ rewardType: 1, milestoneLevel: 1 }, { unique: true });
+
 export const LevelReward = mongoose.model('LevelReward', LevelRewardSchema);
