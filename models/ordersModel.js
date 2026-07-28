@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { ORDER_STATUSES } from "../domain/orderStatus.js";
 
 const orderSchema = new mongoose.Schema({
     userId: {
@@ -33,11 +34,7 @@ const orderSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: [
-            "pending", "assigned", "confirmed", "processing", 
-            "shipping", "delivered", "cancelled", "refunded",
-            "pending_cancel" 
-        ],
+        enum: ORDER_STATUSES,
         default: "pending"
     },
     cancelRequest: {

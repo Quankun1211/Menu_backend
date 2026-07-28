@@ -48,7 +48,10 @@ export const orderSchema = Joi.object({
   platform: Joi.string().valid("web").default("web"),
 });
 
-export const emailSchema = Joi.object({ email: Joi.string().trim().lowercase().email().required() });
+export const emailSchema = Joi.object({
+  email: Joi.string().trim().lowercase().email().required(),
+  type: Joi.string().valid("verify", "reset").default("verify"),
+});
 export const otpSchema = Joi.object({
   email: Joi.string().trim().lowercase().email().required(),
   otp: Joi.string().pattern(/^\d{6}$/).required(),

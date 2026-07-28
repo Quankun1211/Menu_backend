@@ -41,8 +41,6 @@ export const signUp = async (req, res) => {
     const hashedPassword = await bcryptjs.hash(password, salt);
 
     const otp = String((await import("crypto")).randomInt(100000, 1000000));
-    await redisClient.set(`otp:${email}`, otp, { EX: 600 });
-
     const newUser = await User.create({
       name,
       username,
@@ -52,15 +50,24 @@ export const signUp = async (req, res) => {
       isVerified: false,
     });
 
-    sendOTPEmail(email, otp).catch(err => console.error("Gửi mail ngầm thất bại:", err));
+    try {
+      await sendOTPEmail(email, otp);
+      await redisClient.set(`otp:${email}`, otp, { EX: 600 });
+    } catch (mailError) {
+      await Promise.allSettled([
+        redisClient.del(`otp:${email}`),
+        User.deleteOne({ _id: newUser._id, isVerified: false }),
+      ]);
+      throw mailError;
+    }
 
-    await Notification.create({
+    Notification.create({
       userId: newUser._id,
       title: "Chào mừng bạn mới!",
       body: `Chào mừng ${name} tới với Bếp Việt.`,
       type: 'SYSTEM_UPDATE',
       isRead: false
-    });
+    }).catch((error) => console.error("Welcome notification error:", error.message));
 
     return res.status(201).json({
       code: 201,
@@ -69,6 +76,11 @@ export const signUp = async (req, res) => {
     });
   } catch (err) {
     console.error("Signup error:", err);
+    if (["EMAIL_CONFIGURATION_ERROR", "EMAIL_DELIVERY_ERROR"].includes(err.code)) {
+      return res.status(503).json({
+        error: "Dịch vụ gửi mã xác thực đang gián đoạn. Vui lòng thử lại sau.",
+      });
+    }
     return res.status(500).json({ error: "Internal server error" });
   }
 };
@@ -83,7 +95,8 @@ export const verifyOTP = async (req, res) => {
             return res.status(429).json({ message: "Quá nhiều lần thử OTP" });
         }
 
-        const storedOtp = await redisClient.get(`otp:${email}`);
+        const otpKey = type === "reset" ? `otp:reset:${email}` : `otp:${email}`;
+        const storedOtp = await redisClient.get(otpKey);
 
         if (!storedOtp) {
             return res.status(400).json({ message: "Mã OTP đã hết hạn" });
@@ -104,7 +117,7 @@ export const verifyOTP = async (req, res) => {
         }
 
         if (type !== 'reset') {
-            await redisClient.del(`otp:${email}`);
+            await redisClient.del(otpKey);
         }
         await redisClient.del(attemptsKey);
 
@@ -119,7 +132,7 @@ export const verifyOTP = async (req, res) => {
 
 export const resendOTP = async (req, res) => {
     try {
-        const { email } = req.body;
+        const { email, type = "verify" } = req.body;
         const cooldownKey = `otp:cooldown:${email}`;
         if (await redisClient.get(cooldownKey)) {
           return res.status(429).json({ message: "Vui lòng chờ trước khi gửi lại OTP" });
@@ -132,12 +145,10 @@ export const resendOTP = async (req, res) => {
 
         const newOtp = String((await import("crypto")).randomInt(100000, 1000000));
         
-        await redisClient.set(`otp:${email}`, newOtp, { EX: 600 });
+        await sendOTPEmail(email, newOtp);
+        const otpKey = type === "reset" ? `otp:reset:${email}` : `otp:${email}`;
+        await redisClient.set(otpKey, newOtp, { EX: 600 });
         await redisClient.set(cooldownKey, "1", { EX: 60 });
-
-        sendOTPEmail(email, newOtp).catch(err => 
-            console.error(`[Mail Error] Gửi lại OTP cho ${email} thất bại:`, err)
-        );
         
         return res.status(200).json({ 
             code: 200,
@@ -145,8 +156,13 @@ export const resendOTP = async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Resend OTP error:", error);
-        return res.status(500).json({ message: "Lỗi hệ thống khi gửi lại mã." });
+      console.error("Resend OTP error:", error);
+      if (["EMAIL_CONFIGURATION_ERROR", "EMAIL_DELIVERY_ERROR"].includes(error.code)) {
+        return res.status(503).json({
+          message: "Dịch vụ gửi mã xác thực đang gián đoạn. Vui lòng thử lại sau.",
+        });
+      }
+      return res.status(500).json({ message: "Lỗi hệ thống khi gửi lại mã." });
     }
 };
 
@@ -161,15 +177,19 @@ export const forgotPassword = async (req, res) => {
 
     const otp = String((await import("crypto")).randomInt(100000, 1000000));
     
+    await sendOTPEmail(email, otp);
     await redisClient.set(`otp:reset:${email}`, otp, { EX: 600 });
-
-    await sendOTPEmail(email, otp); 
 
     return res.status(200).json({ 
       message: "Mã OTP đặt lại mật khẩu đã được gửi. Vui lòng kiểm tra email." 
     });
   } catch (err) {
     console.error("Forgot password error:", err.message);
+    if (["EMAIL_CONFIGURATION_ERROR", "EMAIL_DELIVERY_ERROR"].includes(err.code)) {
+      return res.status(503).json({
+        error: "Dịch vụ gửi mã xác thực đang gián đoạn. Vui lòng thử lại sau.",
+      });
+    }
     return res.status(500).json({ error: "Lỗi hệ thống khi yêu cầu đặt lại mật khẩu" });
   }
 };

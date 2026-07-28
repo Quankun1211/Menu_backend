@@ -70,13 +70,12 @@ const userSchema = new mongoose.Schema({
   }
 }, {timestamps: true})
 
-userSchema.pre("save", function capViewHistory(next) {
+userSchema.pre("save", function capViewHistory() {
   if (this.viewHistory?.length > 100) {
     this.viewHistory = this.viewHistory
       .sort((left, right) => right.lastViewedAt - left.lastViewedAt)
       .slice(0, 100);
   }
-  next();
 });
 
 export const User = mongoose.model("User", userSchema)

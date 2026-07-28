@@ -6,6 +6,10 @@ import { OrderItem } from "../models/orderItemsModel.js";
 import { LevelReward } from "../models/levelModel.js";
 import { RewardHistory } from "../models/rewardHistoryModel.js";
 import { emitOrderUpdated } from "../utils/orderRealtime.js";
+import {
+  canRequestShipperCancellation,
+  canShipperTransitionOrder,
+} from "../domain/orderStatus.js";
 
 const attachOrderSummaries = async (orders) => {
     if (!orders.length) return orders;
@@ -249,16 +253,12 @@ export const updateOrderStatus = async (req, res) => {
     }
 
     const currentStatus = order.status;
-    let isValidTransition = false;
+    const isValidTransition = canShipperTransitionOrder(currentStatus, nextStatus);
 
-    if (nextStatus === "confirmed" && currentStatus === "assigned") {
-      isValidTransition = true;
-    } else if (nextStatus === "shipping" && (currentStatus === "confirmed" || currentStatus === "processing")) {
-      isValidTransition = true;
+    if (isValidTransition && nextStatus === "shipping") {
       order.shippedAt = new Date();
-    } else if (nextStatus === "delivered") {
-      if (currentStatus === "shipping" && !order.isSeedRewarded) {
-        isValidTransition = true;
+    } else if (isValidTransition && nextStatus === "delivered") {
+      if (!order.isSeedRewarded) {
         order.deliveredAt = new Date();
         order.isSeedRewarded = true;
 
@@ -336,8 +336,7 @@ export const requestCancelOrder = async (req, res) => {
             });
         }
 
-        const allowedStatusForCancel = ["assigned", "confirmed"];
-        if (!allowedStatusForCancel.includes(order.status)) {
+        if (!canRequestShipperCancellation(order.status)) {
             return res.status(400).json({
                 success: false,
                 message: `Không thể gửi yêu cầu hủy khi đơn hàng đang ở trạng thái: ${order.status}`

@@ -47,11 +47,10 @@ const WalletSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
-WalletSchema.pre("save", function capRecentActivities(next) {
+WalletSchema.pre("save", function capRecentActivities() {
   if (this.recentActivities?.length > 100) {
     this.recentActivities = this.recentActivities.slice(-100);
   }
-  next();
 });
 
 export const Wallet = mongoose.model('Wallet', WalletSchema);
