@@ -2,6 +2,34 @@ import { Order } from "../models/ordersModel.js";
 import { User } from "../models/userModel.js"
 import mongoose from 'mongoose';
 import { Wallet } from "../models/walletSchema.js";
+import { OrderItem } from "../models/orderItemsModel.js";
+import { LevelReward } from "../models/levelModel.js";
+import { RewardHistory } from "../models/rewardHistoryModel.js";
+import { emitOrderUpdated } from "../utils/orderRealtime.js";
+
+const attachOrderSummaries = async (orders) => {
+    if (!orders.length) return orders;
+    const items = await OrderItem.find({ orderId: { $in: orders.map((order) => order._id) } })
+        .select("orderId productName quantity")
+        .lean();
+    const byOrder = new Map();
+    for (const item of items) {
+        const key = item.orderId.toString();
+        if (!byOrder.has(key)) byOrder.set(key, []);
+        byOrder.get(key).push(item);
+    }
+    return orders.map((order) => {
+        const orderItems = byOrder.get(order._id.toString()) || [];
+        const names = orderItems.map((item) => item.productName).filter(Boolean);
+        return {
+            ...order,
+            itemCount: orderItems.reduce((sum, item) => sum + item.quantity, 0),
+            productSummary: names.length > 2
+                ? `${names.slice(0, 2).join(", ")} +${names.length - 2} món`
+                : names.join(", "),
+        };
+    });
+};
 
 export const getShipperOrders = async (req, res) => {
     try {
@@ -66,10 +94,11 @@ export const getShipperOrders = async (req, res) => {
             }
         ]);
 
+        const enrichedOrders = await attachOrderSummaries(orders);
         res.status(200).json({
             success: true,
-            count: orders.length,
-            data: orders
+            count: enrichedOrders.length,
+            data: enrichedOrders
         });
     } catch (error) {
         res.status(500).json({
@@ -127,10 +156,11 @@ export const getAllShipperOrders = async (req, res) => {
             { $unwind: { path: "$address", preserveNullAndEmptyArrays: true } }
         ]);
 
+        const enrichedOrders = await attachOrderSummaries(orders);
         res.status(200).json({
             success: true,
-            count: orders.length,
-            data: orders
+            count: enrichedOrders.length,
+            data: enrichedOrders
         });
     } catch (error) {
         res.status(500).json({
@@ -255,7 +285,8 @@ export const updateOrderStatus = async (req, res) => {
 
     const io = req.app.get('io');
     if (io) {
-      io.emit("admin_refresh_orders", { orderId: order._id });
+      emitOrderUpdated(io, order);
+      io.to("admins").emit("admin_refresh_orders", { orderId: order._id });
       io.to(shipperId.toString()).emit("shipper_order_updated", { orderId: order._id, status: nextStatus });
     }
 
@@ -266,7 +297,14 @@ export const updateOrderStatus = async (req, res) => {
     });
 
   } catch (error) {
-    await session.abortTransaction();
+    if (session.inTransaction()) await session.abortTransaction();
+    console.error("[shipper:update-status]", {
+      orderId: req.body?.orderId,
+      nextStatus: req.body?.nextStatus,
+      shipperId: req.user?._id?.toString(),
+      error: error.message,
+      stack: error.stack,
+    });
     res.status(500).json({
       success: false,
       message: "Lỗi hệ thống khi cập nhật trạng thái.",
@@ -314,7 +352,9 @@ export const requestCancelOrder = async (req, res) => {
         };
 
         await order.save();
-        req.app.get('io').emit("admin_refresh_orders", { orderId: order._id });
+        const io = req.app.get('io');
+        emitOrderUpdated(io, order);
+        io.to("admins").emit("admin_refresh_orders", { orderId: order._id });
         res.status(200).json({
             success: true,
             message: "Yêu cầu hủy đơn đã được gửi. Vui lòng chờ Admin phê duyệt.",
@@ -377,9 +417,10 @@ export const updateShipperStatus = async (req, res) => {
 
 export const updateShipperLocation = async (req, res) => {
   const { orderId, latitude, longitude } = req.body;
+  const shipperId = req.user._id;
 
-  const updatedOrder = await Order.findByIdAndUpdate(
-    orderId,
+  const updatedOrder = await Order.findOneAndUpdate(
+    { _id: orderId, shipperId, status: "shipping" },
     { 
       lastKnownLocation: { 
         latitude: parseFloat(latitude), 
@@ -389,11 +430,54 @@ export const updateShipperLocation = async (req, res) => {
     { new: true }
   );
 
+  if (!updatedOrder) {
+    return res.status(404).json({
+      success: false,
+      message: "Không tìm thấy đơn đang giao thuộc quyền xử lý của bạn."
+    });
+  }
+
   req.app.get('io').to(`order:${orderId}`).emit('live_update', {
     latitude: parseFloat(latitude),
     longitude: parseFloat(longitude)
   });
 
   res.status(200).json({ success: true });
+};
+
+export const getShipperStats = async (req, res) => {
+  try {
+    const shipperId = req.user._id;
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const orders = await Order.find({ shipperId, updatedAt: { $gte: startOfDay } })
+      .select("status paymentMethod paymentStatus totalPrice shippedAt deliveredAt")
+      .lean();
+
+    const deliveredOrders = orders.filter((order) => order.status === "delivered");
+    const deliveryDurations = deliveredOrders
+      .filter((order) => order.shippedAt && order.deliveredAt)
+      .map((order) => new Date(order.deliveredAt).getTime() - new Date(order.shippedAt).getTime());
+    const averageDeliveryMinutes = deliveryDurations.length
+      ? Math.round(deliveryDurations.reduce((sum, value) => sum + value, 0) / deliveryDurations.length / 60000)
+      : 0;
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        total: orders.length,
+        active: orders.filter((order) => ["assigned", "confirmed", "processing", "shipping"].includes(order.status)).length,
+        delivered: deliveredOrders.length,
+        cancelled: orders.filter((order) => order.status === "cancelled").length,
+        pendingCancel: orders.filter((order) => order.status === "pending_cancel").length,
+        codCollected: deliveredOrders
+          .filter((order) => order.paymentMethod === "cod" && order.paymentStatus === "paid")
+          .reduce((sum, order) => sum + order.totalPrice, 0),
+        averageDeliveryMinutes,
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: "Không thể tải thống kê shipper." });
+  }
 };
 

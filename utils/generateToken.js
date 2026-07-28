@@ -5,11 +5,27 @@ import { AuthSession } from "../models/authSessionModel.js";
 export const hashToken = (token) =>
   crypto.createHash("sha256").update(token).digest("hex");
 
+export const cookieSecurityOptions = () => {
+  const isProduction = process.env.NODE_ENV === "production";
+  const configuredSameSite = process.env.COOKIE_SAME_SITE?.toLowerCase();
+  const sameSite = ["lax", "strict", "none"].includes(configuredSameSite)
+    ? configuredSameSite
+    : isProduction
+      ? "none"
+      : "lax";
+
+  return {
+    secure: isProduction || sameSite === "none",
+    sameSite,
+    ...(process.env.COOKIE_DOMAIN && { domain: process.env.COOKIE_DOMAIN }),
+  };
+};
+
 export const csrfCookieOptions = () => ({
   httpOnly: false,
-  sameSite: process.env.NODE_ENV === "production" ? "lax" : "lax",
-  secure: process.env.NODE_ENV === "production",
+  ...cookieSecurityOptions(),
   maxAge: 7 * 24 * 60 * 60 * 1000,
+  path: "/",
 });
 
 export const setCsrfToken = (res, existingToken) => {
@@ -46,8 +62,7 @@ export const issueSession = async (user, res, req, familyId = crypto.randomUUID(
 
   const cookieBase = {
     httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    ...cookieSecurityOptions(),
   };
   res.cookie("jwt", accessToken, { ...cookieBase, maxAge: 15 * 60 * 1000 });
   res.cookie("refresh_token", refreshToken, {

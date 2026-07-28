@@ -21,6 +21,22 @@ const orderItemSchema = new mongoose.Schema({
         type: String,
         required: true
     },
+    // Snapshot fields keep historical orders usable if a product changes or is removed.
+    productImage: {
+        type: String,
+        default: ""
+    },
+    productUnit: {
+        type: String,
+        default: ""
+    },
+    originalPrice: {
+        type: Number
+    },
+    salePercent: {
+        type: Number,
+        default: 0
+    },
     price: {
         type: Number,
         required: true

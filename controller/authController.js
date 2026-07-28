@@ -6,7 +6,7 @@ import { Notification } from "../models/notification/notificationSchema.js"
 import { redisClient } from "../config/redis.js";
 import jwt from "jsonwebtoken";
 import { AuthSession } from "../models/authSessionModel.js";
-import { hashToken, issueSession, setCsrfToken } from "../utils/generateToken.js";
+import { cookieSecurityOptions, hashToken, issueSession, setCsrfToken } from "../utils/generateToken.js";
 const generateRandomAvatar = (username) => {
   const params = [
     'backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf', 
@@ -219,7 +219,7 @@ export const resetPassword = async (req, res) => {
 
 export const login = async (req, res) => {
     try {
-        const {username, password} = req.body
+        const {username, password, clientType} = req.body
         const identifier = username.trim().toLowerCase()
         const user = await User.findOne({
             $or: [
@@ -255,7 +255,11 @@ export const login = async (req, res) => {
               email: user.email,
               name: user.name,
               role: user.role,
-              csrfToken: session.csrfToken
+              csrfToken: session.csrfToken,
+              ...(clientType === "mobile" && {
+                access_token: session.accessToken,
+                refresh_token: session.refreshToken,
+              }),
             }
         })
     } catch (error) {
@@ -276,9 +280,10 @@ export const logout = async (req, res) => {
             );
           } catch {}
         }
-        res.clearCookie("jwt");
-        res.clearCookie("refresh_token", { path: "/api/auth" });
-        res.clearCookie("csrf_token");
+        const cookieSecurity = cookieSecurityOptions();
+        res.clearCookie("jwt", cookieSecurity);
+        res.clearCookie("refresh_token", { ...cookieSecurity, path: "/api/auth" });
+        res.clearCookie("csrf_token", { ...cookieSecurity, path: "/" });
         console.log("Logout ok");
         res.status(200).json({ 
             code: 200,

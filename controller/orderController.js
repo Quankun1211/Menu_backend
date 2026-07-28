@@ -3,6 +3,7 @@ import { Cart } from "../models/cartsModel.js"
 import { CartItems } from "../models/cartsItemModel.js"
 import { Order } from "../models/ordersModel.js";
 import { OrderItem } from "../models/orderItemsModel.js";
+import { emitOrderUpdated } from "../utils/orderRealtime.js";
 import { Product } from "../models/productsModel.js"
 import { Special } from "../models/specialModel.js"
 import { Coupons } from "../models/couponsModel.js"
@@ -11,6 +12,32 @@ import { UserCoupon } from "../models/userCouponModel.js";
 import { Transaction } from '../models/transactionModel.js';
 import { sendInternalNotification } from "./notificationController.js";
 import crypto from 'crypto';
+
+const enrichOrderItems = async (orderItems) => {
+  if (!orderItems.length) return [];
+
+  const productIds = [...new Set(orderItems.map((item) => item.productId?.toString()).filter(Boolean))];
+  const [products, specials] = await Promise.all([
+    Product.find({ _id: { $in: productIds } }).select("name images unit").lean(),
+    Special.find({ _id: { $in: productIds } }).select("name images unit").lean(),
+  ]);
+  const productMap = new Map(products.map((item) => [item._id.toString(), item]));
+  const specialMap = new Map(specials.map((item) => [item._id.toString(), item]));
+
+  return orderItems.map((item) => {
+    const id = item.productId?.toString();
+    const catalogItem = item.itemType === "Special"
+      ? specialMap.get(id)
+      : item.itemType === "Product"
+        ? productMap.get(id)
+        : productMap.get(id) || specialMap.get(id);
+
+    return {
+      ...item,
+      resolvedProduct: catalogItem || null,
+    };
+  });
+};
 import qs from 'qs';
 import { sortObject } from '../utils/helper.js';
 import { validateAndCalculateCoupon } from "../utils/helper.js";
@@ -64,6 +91,7 @@ export const createOrder = async (req, res) => {
         itemType,
         productName: product.name,
         productImage: product.images || "",
+        productUnit: product.unit || "",
         originalPrice: product.price,
         salePercent,
         price: finalPrice,
@@ -432,21 +460,21 @@ export const getMyOrders = async (req, res) => {
 
     const orderIds = orders.map(o => o._id);
 
-    const allOrderItems = await OrderItem.find({
+    const rawOrderItems = await OrderItem.find({
       orderId: { $in: orderIds }
     })
-      .populate("productId", "name images unit")
       .lean();
+    const allOrderItems = await enrichOrderItems(rawOrderItems);
 
     const itemsByOrder = {};
     for (const item of allOrderItems) {
       const oid = item.orderId.toString();
       if (!itemsByOrder[oid]) itemsByOrder[oid] = [];
       itemsByOrder[oid].push({
-        productId: item.productId?._id,
-        name: item.productId?.name || item.productName,
-        image: item.productId?.images || null,
-        unit: item.productId?.unit || null,
+        productId: item.resolvedProduct?._id || item.productId,
+        name: item.resolvedProduct?.name || item.productName,
+        image: item.resolvedProduct?.images || item.productImage || null,
+        unit: item.resolvedProduct?.unit || item.productUnit || null,
         price: item.price,
         quantity: item.quantity,
         total: item.price * item.quantity
@@ -529,17 +557,14 @@ export const getOrderDetail = async (req, res) => {
       });
     }
 
-    const orderItems = await OrderItem.find({ orderId })
-      .populate({
-        path: "productId",
-        select: "name images unit"
-      });
+    const rawOrderItems = await OrderItem.find({ orderId }).lean();
+    const orderItems = await enrichOrderItems(rawOrderItems);
 
     const items = orderItems.map(item => ({
-      productId: item.productId?._id,
-      name: item.productId?.name || item.productName,
-      image: item.productId?.images || null,
-      unit: item.productId?.unit || null,
+      productId: item.resolvedProduct?._id || item.productId,
+      name: item.resolvedProduct?.name || item.productName,
+      image: item.resolvedProduct?.images || item.productImage || null,
+      unit: item.resolvedProduct?.unit || item.productUnit || null,
       price: item.price,
       quantity: item.quantity,
       total: item.price * item.quantity
@@ -652,6 +677,7 @@ export const cancelOrder = async (req, res) => {
 
     await order.save({ session });
     await session.commitTransaction();
+    emitOrderUpdated(req.app.get("io"), order);
     console.log("--- HOÀN TẤT HỦY ĐƠN THÀNH CÔNG ---");
 
     return res.status(200).json({

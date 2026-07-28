@@ -91,6 +91,10 @@ const orderSchema = new mongoose.Schema({
     deliveredAt: {
         type: Date
     },
+    isSeedRewarded: {
+        type: Boolean,
+        default: false
+    },
     lastKnownLocation: {
         latitude: Number,
         longitude: Number

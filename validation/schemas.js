@@ -30,6 +30,7 @@ export const paginationQuery = Joi.object({
 export const loginSchema = Joi.object({
   username: Joi.string().trim().lowercase().min(3).max(254).required(),
   password: Joi.string().min(6).max(128).required(),
+  clientType: Joi.string().valid("web", "mobile").default("web"),
 });
 export const registerSchema = Joi.object({
   name: Joi.string().trim().min(2).max(100).required(),

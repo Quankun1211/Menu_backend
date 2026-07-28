@@ -17,6 +17,7 @@ import cloudinary from "../config/cloudinary.js"
 import fs from 'fs';
 
 import { clearCache } from "../utils/redis.utils.js";
+import { emitOrderUpdated } from "../utils/orderRealtime.js";
 
 const clearCategoryCaches = (type) => {
   const patternsByType = {
@@ -304,6 +305,7 @@ export const assignOrderToShipper = async (req, res) => {
                 orderId: order._id,
                 message: "Bạn có đơn hàng mới được phân công"
             });
+            emitOrderUpdated(io, order, { assigned: true });
         } else {
             console.log("[DEBUG] IO instance not found");
         }
@@ -367,6 +369,7 @@ export const approveCancelOrder = async (req, res) => {
 
         await order.save({ session });
         await session.commitTransaction();
+        emitOrderUpdated(req.app.get("io"), order);
 
         res.status(200).json({
             success: true,
@@ -405,13 +408,15 @@ export const processCancelOrder = async (req, res) => {
     order.cancelRequest.adminNote = adminNote;
     await order.save();
 
-    req.app.get("io").to(order.shipperId.toString()).emit("shipper_cancel_result", {
+    const io = req.app.get("io");
+    io.to(order.shipperId.toString()).emit("shipper_cancel_result", {
       orderId: order._id,
       status: order.status,
       message: action === "accept" ? "Yêu cầu hủy đơn đã được chấp nhận" : "Yêu cầu hủy đơn bị từ chối",
     });
 
-    req.app.get("io").emit("admin_refresh_orders", { orderId: order._id });
+    emitOrderUpdated(io, order);
+    io.to("admins").emit("admin_refresh_orders", { orderId: order._id });
 
     res.status(200).json({ success: true, status: order.status });
   } catch (error) {

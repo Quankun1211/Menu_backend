@@ -47,6 +47,7 @@ import notificationRoutes from "./routes/notificationRoutes.js"
 import { connectRedis } from "./config/redis.js"
 const app = express()
 app.disable("x-powered-by");
+app.set("trust proxy", 1);
 app.use(securityHeaders);
 app.use(rateLimit({ max: 180 }));
 app.use(requestLogger);
@@ -56,13 +57,18 @@ app.use((req, res, next) => {
 });
 const PORT = process.env.PORT || 5000
 const __dirname = path.resolve()
+const configuredFrontendOrigins = [
+  process.env.FRONTEND_URL,
+  ...(process.env.FRONTEND_URLS || "").split(","),
+].map((origin) => origin?.trim()).filter(Boolean);
+
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:5174',
   'http://localhost',
   'http://localhost:5000',
   'http://localhost:3000',
-  process.env.FRONTEND_URL,
+  ...configuredFrontendOrigins,
   'https://fanciful-dieffenbachia-2f571b.netlify.app', 
   'https://warm-chaja-2bce2f.netlify.app', 
   'https://menu-backend-ve33.onrender.com'
@@ -129,14 +135,6 @@ io.on("connection", (socket) => {
 
   socket.on("join_shipper_room", () => {
     if (socket.user.role === "shipper") socket.join(`shipper:${socket.user._id}`);
-  });
-
-  socket.on("order_status_changed_by_shipper", (data) => {
-    if (socket.user.role === "shipper") io.to("admins").emit("admin_refresh_orders", { orderId: data.orderId });
-  });
-
-  socket.on("shipper_request_cancel", (data) => {
-    if (socket.user.role === "shipper") io.to("admins").emit("admin_refresh_orders", { orderId: data.orderId });
   });
 
   socket.on("disconnect", () => {
