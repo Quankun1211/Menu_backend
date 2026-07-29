@@ -2,6 +2,8 @@ const safeMethods = new Set(["GET", "HEAD", "OPTIONS"]);
 const excludedPaths = new Set([
   "/api/auth/login",
   "/api/auth/register",
+  "/api/auth/google",
+  "/api/auth/facebook",
   "/api/auth/verify-otp",
   "/api/auth/resend-otp",
   "/api/auth/forgot-password",

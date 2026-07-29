@@ -15,7 +15,6 @@ const userSchema = new mongoose.Schema({
     },
     password: {
         type: String,
-        required: true,
         minlength: 6
     },
     email: {
@@ -24,6 +23,10 @@ const userSchema = new mongoose.Schema({
         trim: true,
         unique: true,
         lowercase: true
+    },
+    emailNeedsVerification: {
+      type: Boolean,
+      default: false,
     },
     phone: {
       type: String,
@@ -35,6 +38,25 @@ const userSchema = new mongoose.Schema({
     }, 
     avatar: {
         type: String,
+    },
+    authProviders: [{
+      _id: false,
+      provider: {
+        type: String,
+        enum: ["google", "facebook"],
+        required: true,
+      },
+      providerUserId: {
+        type: String,
+        required: true,
+      },
+      linkedAt: {
+        type: Date,
+        default: Date.now,
+      },
+    }],
+    lastLoginAt: {
+      type: Date,
     },
     isOnline: {
         type: Boolean,
@@ -69,6 +91,11 @@ const userSchema = new mongoose.Schema({
     default: true
   }
 }, {timestamps: true})
+
+userSchema.index(
+  { "authProviders.provider": 1, "authProviders.providerUserId": 1 },
+  { unique: true, sparse: true },
+);
 
 userSchema.pre("save", function capViewHistory() {
   if (this.viewHistory?.length > 100) {

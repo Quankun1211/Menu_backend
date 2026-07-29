@@ -45,11 +45,14 @@ export const getMe = async (req, res) => {
                 id: user._id,
                 name: user.name,
                 username: user.username,
-                email: user.email,
+                email: user.emailNeedsVerification ? null : user.email,
+                emailNeedsVerification: Boolean(user.emailNeedsVerification),
                 role: user.role,
                 createdAt: user.createdAt,
                 avatar: user.avatar || null,
-                isOnline: user.isOnline
+                isOnline: user.isOnline,
+                authProviders: (user.authProviders || []).map(({ provider }) => provider),
+                lastLoginAt: user.lastLoginAt || null
             }
         });
     } catch (error) {

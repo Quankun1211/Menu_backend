@@ -7,6 +7,177 @@ import { redisClient } from "../config/redis.js";
 import jwt from "jsonwebtoken";
 import { AuthSession } from "../models/authSessionModel.js";
 import { cookieSecurityOptions, hashToken, issueSession, setCsrfToken } from "../utils/generateToken.js";
+import { OAuth2Client } from "google-auth-library";
+
+const googleClient = new OAuth2Client();
+
+const publicUser = (user) => ({
+  _id: user._id,
+  id: user._id,
+  username: user.username,
+  email: user.emailNeedsVerification ? null : user.email,
+  emailNeedsVerification: Boolean(user.emailNeedsVerification),
+  name: user.name,
+  role: user.role,
+  avatar: user.avatar || null,
+  authProviders: (user.authProviders || []).map(({ provider }) => provider),
+});
+
+const createUniqueUsername = async (email, provider) => {
+  const localPart = email?.split("@")[0] || `${provider}user`;
+  const base = localPart
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "")
+    .slice(0, 30) || `${provider}user`;
+
+  if (!(await User.exists({ username: base }))) return base;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const candidate = `${base.slice(0, 33)}${Math.random().toString(36).slice(2, 8)}`;
+    if (!(await User.exists({ username: candidate }))) return candidate;
+  }
+  return `${provider}${Date.now().toString(36)}`;
+};
+
+const completeSocialLogin = async ({ provider, providerUserId, email, name, avatar }, req, res) => {
+  const normalizedEmail = email?.trim().toLowerCase();
+  if (!providerUserId || (provider !== "facebook" && !normalizedEmail)) {
+    return res.status(422).json({ error: "Tài khoản mạng xã hội không cung cấp định danh hợp lệ." });
+  }
+
+  let isNewUser = false;
+  let user = await User.findOne({
+    authProviders: { $elemMatch: { provider, providerUserId } },
+  });
+
+  if (!user) {
+    user = normalizedEmail ? await User.findOne({ email: normalizedEmail }) : null;
+    if (user) {
+      const providerAlreadyLinked = user.authProviders?.some(
+        (item) => item.provider === provider && item.providerUserId !== providerUserId,
+      );
+      if (providerAlreadyLinked) {
+        return res.status(409).json({ error: `Email này đã liên kết với một tài khoản ${provider} khác.` });
+      }
+      user.authProviders ||= [];
+      user.authProviders.push({ provider, providerUserId, linkedAt: new Date() });
+      if (!user.avatar && avatar) user.avatar = avatar;
+      if (!user.name && name) user.name = name;
+      user.isVerified = true;
+    } else {
+      isNewUser = true;
+      user = new User({
+        name: name || normalizedEmail?.split("@")[0] || "Người dùng Facebook",
+        username: await createUniqueUsername(normalizedEmail, provider),
+        email: normalizedEmail || `facebook_${providerUserId}@social.invalid`,
+        emailNeedsVerification: !normalizedEmail,
+        avatar: avatar || generateRandomAvatar(providerUserId),
+        authProviders: [{ provider, providerUserId }],
+        isVerified: true,
+        isActive: true,
+        role: "user",
+      });
+    }
+  }
+
+  if (user.isActive === false) {
+    return res.status(403).json({ error: "Tài khoản đã bị khóa." });
+  }
+
+  user.lastLoginAt = new Date();
+  await user.save();
+  if (isNewUser) {
+    Notification.create({
+      userId: user._id,
+      title: "Chào mừng bạn mới!",
+      body: `Chào mừng ${user.name} tới với Bếp Việt.`,
+      type: "SYSTEM_UPDATE",
+      isRead: false,
+    }).catch((error) => console.error("Social welcome notification error:", error.message));
+  }
+  const session = await issueSession(user, res, req);
+  triggerAIUpdate(user._id);
+
+  return res.status(200).json({
+    code: 200,
+    message: `Đăng nhập bằng ${provider === "google" ? "Google" : "Facebook"} thành công.`,
+    data: {
+      ...publicUser(user),
+      csrfToken: session.csrfToken,
+      ...(["mobile", "spa"].includes(req.body.clientType) && {
+        access_token: session.accessToken,
+        refresh_token: session.refreshToken,
+      }),
+    },
+  });
+};
+
+export const googleLogin = async (req, res) => {
+  try {
+    if (!process.env.GOOGLE_CLIENT_ID) {
+      return res.status(503).json({ error: "Đăng nhập Google chưa được cấu hình." });
+    }
+    const ticket = await googleClient.verifyIdToken({
+      idToken: req.body.token,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload();
+    if (!payload?.sub || !payload.email || payload.email_verified !== true) {
+      return res.status(401).json({ error: "Tài khoản Google chưa xác minh email." });
+    }
+    return completeSocialLogin({
+      provider: "google",
+      providerUserId: payload.sub,
+      email: payload.email,
+      name: payload.name,
+      avatar: payload.picture,
+    }, req, res);
+  } catch (error) {
+    console.error("Google login error:", error.message);
+    return res.status(401).json({ error: "Phiên đăng nhập Google không hợp lệ hoặc đã hết hạn." });
+  }
+};
+
+export const facebookLogin = async (req, res) => {
+  try {
+    const appId = process.env.FACEBOOK_APP_ID;
+    const appSecret = process.env.FACEBOOK_APP_SECRET;
+    if (!appId || !appSecret) {
+      return res.status(503).json({ error: "Đăng nhập Facebook chưa được cấu hình." });
+    }
+
+    const appAccessToken = `${appId}|${appSecret}`;
+    const debugUrl = new URL("https://graph.facebook.com/debug_token");
+    debugUrl.searchParams.set("input_token", req.body.token);
+    debugUrl.searchParams.set("access_token", appAccessToken);
+    const debugResponse = await fetch(debugUrl, { signal: AbortSignal.timeout(8_000) });
+    const debugPayload = await debugResponse.json();
+    const tokenData = debugPayload?.data;
+    if (!debugResponse.ok || !tokenData?.is_valid || String(tokenData.app_id) !== String(appId)) {
+      return res.status(401).json({ error: "Phiên đăng nhập Facebook không hợp lệ hoặc đã hết hạn." });
+    }
+
+    const profileUrl = new URL("https://graph.facebook.com/me");
+    profileUrl.searchParams.set("fields", "id,name,email,picture.type(large)");
+    profileUrl.searchParams.set("access_token", req.body.token);
+    const profileResponse = await fetch(profileUrl, { signal: AbortSignal.timeout(8_000) });
+    const profile = await profileResponse.json();
+    if (!profileResponse.ok || !profile?.id || String(profile.id) !== String(tokenData.user_id)) {
+      return res.status(401).json({ error: "Không thể xác minh hồ sơ Facebook." });
+    }
+
+    return completeSocialLogin({
+      provider: "facebook",
+      providerUserId: profile.id,
+      email: profile.email,
+      name: profile.name,
+      avatar: profile.picture?.data?.url,
+    }, req, res);
+  } catch (error) {
+    console.error("Facebook login error:", error.message);
+    return res.status(502).json({ error: "Không thể kết nối Facebook. Vui lòng thử lại." });
+  }
+};
+
 const generateRandomAvatar = (username) => {
   const params = [
     'backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf', 
@@ -264,17 +435,15 @@ export const login = async (req, res) => {
           return res.status(403).json({ error: "Tài khoản đã bị khóa" });
         }
         const session = await issueSession(user, res, req)
+        user.lastLoginAt = new Date()
+        await user.save()
         console.log("Login ok");
         triggerAIUpdate(user._id)
         
         res.status(200).json({
             code: 200,
             data: {
-              _id: user._id,
-              username: user.username,
-              email: user.email,
-              name: user.name,
-              role: user.role,
+              ...publicUser(user),
               csrfToken: session.csrfToken,
               ...(["mobile", "spa"].includes(clientType) && {
                 access_token: session.accessToken,
