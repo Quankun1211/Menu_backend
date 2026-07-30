@@ -7,7 +7,7 @@ import { validate } from "../../middleware/validate.js"
 import { catalogSchema, paginationQuery, slugOrIdParams } from "../../validation/schemas.js"
 const router = express.Router()
 
-router.get("/get-detail/:id", validate(slugOrIdParams(), "params"), optionalProtectRoute, trackBehavior("view", "Menu"), getMenuDetail)
+router.get(["/get-detail/:id", "/:id"], validate(slugOrIdParams(), "params"), optionalProtectRoute, trackBehavior("view", "Menu"), getMenuDetail)
 router.post("/create", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), validate(catalogSchema), createMenu)
-router.get("/get", validate(paginationQuery, "query"), getMenus)
+router.get(["/get", "/"], validate(paginationQuery, "query"), getMenus)
 export default router

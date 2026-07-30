@@ -7,7 +7,7 @@ import { catalogSchema, paginationQuery, slugOrIdParams } from "../validation/sc
 const router = express.Router()
 
 router.post("/create", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("images"), validate(catalogSchema), createSpecialProduct)
-router.get("/get", validate(paginationQuery, "query"), getProductsSpecialByRegion)
+router.get(["/get", "/"], validate(paginationQuery, "query"), getProductsSpecialByRegion)
 router.get("/latest", validate(paginationQuery, "query"), getLatestSpecial)
 router.get("/:id", validate(slugOrIdParams(), "params"), getSpecialDetail)
 

@@ -44,6 +44,11 @@ import recipeRoutes from "./routes/menuRoutes/recipeRoutes.js"
 import menuRoutes from "./routes/menuRoutes/menuRoutes.js"
 
 import notificationRoutes from "./routes/notificationRoutes.js"
+import {
+  checkoutPreviewV1Routes,
+  currentUserV1Routes,
+  walletV1Routes,
+} from "./routes/v1UtilityRoutes.js"
 
 import { connectRedis } from "./config/redis.js"
 import { redisClient } from "./config/redis.js"
@@ -181,6 +186,32 @@ app.use("/api/menu/recipe", recipeRoutes)
 app.use("/api/menu/my-menu", menuRoutes)
 
 app.use("/api/notification", notificationRoutes)
+
+// Versioned REST contract. Legacy /api/* mounts above remain temporarily
+// available while external consumers migrate to /api/v1.
+app.use("/api/v1/admin", adminRoutes)
+app.use("/api/v1/shippers", shipperRoutes)
+app.use("/api/v1/auth", authRoutes)
+app.use("/api/v1/users", userRoutes)
+app.use("/api/v1/users", currentUserV1Routes)
+app.use("/api/v1/categories", categoryRoutes)
+app.use("/api/v1/products", productRoutes)
+app.use("/api/v1/cart", cartRoutes)
+app.use("/api/v1/favourites", favouriteRoutes)
+app.use("/api/v1/addresses", addressRoutes)
+app.use("/api/v1/coupons", couponRoutes)
+app.use("/api/v1/orders", orderRoutes)
+app.use("/api/v1/specials", specialRoutes)
+app.use("/api/v1/sales", saleRoutes)
+app.use("/api/v1/settings", configRoutes)
+app.use("/api/v1/chatbot", chatbotRoutes)
+app.use("/api/v1/menu-categories", categoryMenuRoutes)
+app.use("/api/v1/ingredients", ingredientRoutes)
+app.use("/api/v1/recipes", recipeRoutes)
+app.use("/api/v1/menus", menuRoutes)
+app.use("/api/v1/notifications", notificationRoutes)
+app.use("/api/v1/wallets", walletV1Routes)
+app.use("/api/v1/checkout-previews", checkoutPreviewV1Routes)
 
 app.get("/health", async (_req, res) => {
   const mongoReady = (await import("mongoose")).default.connection.readyState === 1;

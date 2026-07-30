@@ -6,9 +6,11 @@ import { validate } from "../middleware/validate.js"
 import { productIdSchema, productIdsSchema } from "../validation/schemas.js"
 const router = express.Router()
 
-router.post("/add-to-cart", protectRoute, validate(productIdSchema), trackBehavior("add_to_cart", "Product"), addToCart)
+router.post(["/add-to-cart", "/items"], protectRoute, validate(productIdSchema), trackBehavior("add_to_cart", "Product"), addToCart)
+router.patch(["/update-quantity", "/items"], protectRoute, validate(productIdSchema.required()), trackBehavior("update_cart", "Product"), updateCartItemQuantity)
 router.post("/update-quantity", protectRoute, validate(productIdSchema.required()), trackBehavior("update_cart", "Product"), updateCartItemQuantity)
 router.post("/remove-cart", protectRoute, validate(productIdsSchema), trackBehavior("remove_from_cart", "Product"), removeItemsFromCart)
-router.get("/get-cart", protectRoute, getCart)
+router.delete("/items", protectRoute, validate(productIdsSchema), trackBehavior("remove_from_cart", "Product"), removeItemsFromCart)
+router.get(["/get-cart", "/"], protectRoute, getCart)
 
 export default router

@@ -8,8 +8,8 @@ import { catalogSchema, objectIdParams, paginationQuery } from "../../validation
 const router = express.Router()
 
 router.post("/create", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), validate(catalogSchema), createIngredient)
-router.get("/get-all", validate(paginationQuery, "query"), getAllIngredient)
-router.get("/get-filter", validate(paginationQuery, "query"), getSystemIngredients)
-router.get("/get/:ingredientId", validate(objectIdParams("ingredientId"), "params"), getIngredientById)
+router.get(["/get-all", "/"], validate(paginationQuery, "query"), getAllIngredient)
+router.get(["/get-filter", "/system"], validate(paginationQuery, "query"), getSystemIngredients)
+router.get(["/get/:ingredientId", "/:ingredientId"], validate(objectIdParams("ingredientId"), "params"), getIngredientById)
 
 export default router

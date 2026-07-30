@@ -7,6 +7,6 @@ import { categorySchema, paginationQuery } from "../../validation/schemas.js"
 const router = express.Router()
 
 router.post("/create", protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("images"), validate(categorySchema), createCategoryMenu)
-router.get("/get", validate(paginationQuery, "query"), getCategoryMenu)
+router.get(["/get", "/"], validate(paginationQuery, "query"), getCategoryMenu)
 
 export default router

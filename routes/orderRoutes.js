@@ -11,39 +11,41 @@ import { distributedRateLimit } from "../middleware/security.js"
 const router = express.Router()
 
 router.post(
-  "/create",
+  ["/create", "/"],
   protectRoute,
   distributedRateLimit({ windowSeconds: 60, max: 10, prefix: "order:create" }),
   validate(orderSchema),
   createOrder,
 )
-router.get("/get-detail/:orderId", protectRoute, validate(objectIdParams("orderId"), "params"), trackBehavior("view", "Order"), getOrderDetail)
+router.get(["/get-detail/:orderId", "/:orderId"], protectRoute, validate(objectIdParams("orderId"), "params"), trackBehavior("view", "Order"), getOrderDetail)
+router.patch(["/cancel/:orderId", "/:orderId/cancellation"], protectRoute, validate(objectIdParams("orderId"), "params"), validate(cancelOrderSchema), trackBehavior("cancel", "Order"), cancelOrder)
+router.patch(["/delivered/:orderId", "/:orderId/delivery"], protectRoute, authorizeRole(["shipper", "admin", "super_admin"]), validate(objectIdParams("orderId"), "params"), markOrderAsDelivered)
 router.post("/cancel/:orderId", protectRoute, validate(objectIdParams("orderId"), "params"), validate(cancelOrderSchema), trackBehavior("cancel", "Order"), cancelOrder)
 router.put("/delivered/:orderId", protectRoute, authorizeRole(["shipper", "admin", "super_admin"]), validate(objectIdParams("orderId"), "params"), markOrderAsDelivered)
-router.get("/wallet", protectRoute, getMyWallet); 
-router.get("/my-coupon", protectRoute, getMyCoupons); 
-router.post("/claim-reward", protectRoute, claimMilestoneReward); 
-router.get("/vnpay-return", vnpayReturn); 
-router.get("/vnpay-ipn", vnpayIPN);
-router.get("/vnpay-confirm", confirmVnpayReturn);
+router.get("/wallet", protectRoute, getMyWallet);
+router.get("/my-coupon", protectRoute, getMyCoupons);
+router.post("/claim-reward", protectRoute, claimMilestoneReward);
+router.get(["/vnpay-return", "/payments/vnpay/return"], vnpayReturn);
+router.get(["/vnpay-ipn", "/payments/vnpay/ipn"], vnpayIPN);
+router.get(["/vnpay-confirm", "/payments/vnpay/confirmation"], confirmVnpayReturn);
 router.post(
-  "/vnpay-reconcile/:orderId",
+  ["/vnpay-reconcile/:orderId", "/:orderId/payments/vnpay/reconciliation"],
   protectRoute,
   validate(objectIdParams("orderId"), "params"),
   reconcileVnpayPayment,
 );
 router.post(
-  "/vnpay-abandon/:orderId",
+  ["/vnpay-abandon/:orderId", "/:orderId/payments/vnpay/abandonment"],
   protectRoute,
   validate(objectIdParams("orderId"), "params"),
   abandonVnpayPayment,
 );
 router.post(
-  "/vnpay-resume/:orderId",
+  ["/vnpay-resume/:orderId", "/:orderId/payments/vnpay/resumption"],
   protectRoute,
   validate(objectIdParams("orderId"), "params"),
   resumeVnpayPayment,
 );
-router.get("/get", protectRoute, validate(paginationQuery, "query"), getMyOrders)
+router.get(["/get", "/"], protectRoute, validate(paginationQuery, "query"), getMyOrders)
 
 export default router

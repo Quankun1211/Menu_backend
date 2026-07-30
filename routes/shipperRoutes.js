@@ -9,9 +9,9 @@ router.use(protectRoute, authorizeRole(["shipper"]));
 router.get("/orders", getShipperOrders)
 router.get("/all-orders", getAllShipperOrders)
 router.get("/stats", getShipperStats)
-router.patch("/update", validate(shipperStatusSchema), updateOrderStatus);
-router.post("/request-cancel", validate(shipperCancelSchema), requestCancelOrder);
-router.put("/update-online", validate(onlineSchema), updateShipperStatus);
-router.put("/update-location", validate(locationSchema), updateShipperLocation);
+router.patch(["/update", "/orders/status"], validate(shipperStatusSchema), updateOrderStatus);
+router.post(["/request-cancel", "/orders/cancellation-requests"], validate(shipperCancelSchema), requestCancelOrder);
+router.put(["/update-online", "/me/availability"], validate(onlineSchema), updateShipperStatus);
+router.put(["/update-location", "/orders/location"], validate(locationSchema), updateShipperLocation);
 
 export default router

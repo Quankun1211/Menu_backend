@@ -21,6 +21,7 @@ app.use(express.json());
 app.use(cookieParser());
 app.post("/envelope", validateRequestEnvelope, (_req, res) => res.json({ ok: true }));
 app.post("/mutate", csrfProtection, (_req, res) => res.json({ ok: true }));
+app.post("/api/v1/auth/login", csrfProtection, (_req, res) => res.json({ ok: true }));
 app.get("/auth/csrf", getCsrfToken);
 app.post(
   "/admin",
@@ -45,6 +46,11 @@ test("CSRF accepts matching double-submit token", async () => {
     .set("Cookie", "csrf_token=test-token")
     .set("X-CSRF-Token", "test-token")
     .send({});
+  assert.equal(response.status, 200);
+});
+
+test("CSRF allows public v1 authentication mutations", async () => {
+  const response = await request(app).post("/api/v1/auth/login").send({});
   assert.equal(response.status, 200);
 });
 

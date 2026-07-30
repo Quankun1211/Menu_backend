@@ -6,7 +6,7 @@ import { paginationQuery } from "../validation/schemas.js"
 import { authorizeRole, protectRoute } from "../middleware/protectRoute.js"
 const router = express.Router()
 
-router.get("/get-item", validate(paginationQuery, "query"), getSaleItems)
-router.get("/get-admin", protectRoute, authorizeRole(["admin", "super_admin"]), validate(paginationQuery, "query"), getAllSalesAdmin)
+router.get(["/get-item", "/"], validate(paginationQuery, "query"), getSaleItems)
+router.get(["/get-admin", "/admin"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(paginationQuery, "query"), getAllSalesAdmin)
 
 export default router

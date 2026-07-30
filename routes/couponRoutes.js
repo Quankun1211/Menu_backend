@@ -7,6 +7,6 @@ import { couponApplySchema, couponCreateSchema } from "../validation/schemas.js"
 const router = express.Router()
 
 router.post("/create", protectRoute, authorizeRole(["admin", "super_admin"]), validate(couponCreateSchema), createCoupon)
-router.post("/apply", protectRoute, validate(couponApplySchema), applyCoupon)
+router.post(["/apply", "/validation"], protectRoute, validate(couponApplySchema), applyCoupon)
 
 export default router
