@@ -7,6 +7,7 @@ export const ORDER_STATUSES = Object.freeze([
   "delivered",
   "completed",
   "pending_cancel",
+  "payment_failed",
   "cancelled",
   "refunded",
 ]);
@@ -25,6 +26,7 @@ const transitions = Object.freeze({
   processing: ["shipping", "cancelled"],
   shipping: ["delivered"],
   pending_cancel: ["assigned", "cancelled"],
+  payment_failed: ["pending"],
   delivered: ["refunded"],
   completed: ["refunded"],
   cancelled: ["refunded"],

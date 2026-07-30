@@ -55,7 +55,7 @@ const orderSchema = new mongoose.Schema({
 
     cancelledBy: {
         type: String,
-        enum: ["user", "admin"]
+        enum: ["user", "admin", "system"]
     },
 
     address: {
@@ -74,14 +74,35 @@ const orderSchema = new mongoose.Schema({
     },
     paymentStatus: {
         type: String,
-        enum: ['pending', 'paid', 'failed', 'refunded'],
+        enum: ['pending', 'checking', 'paid', 'failed', 'cancelled', 'refunded'],
         default: 'pending'
     },
+    refundStatus: {
+        type: String,
+        enum: ['none', 'processing', 'gateway_completed', 'completed', 'failed'],
+        default: 'none'
+    },
+    refundRequestedAt: Date,
+    refundedAt: Date,
     paidAt: {
         type: Date
     },
     paymentExpiresAt: Date,
+    paymentRequestDate: String,
+    currentPaymentRef: String,
+    paymentCheckAttempts: {
+        type: Number,
+        default: 0
+    },
+    checkoutSessionId: {
+        type: String,
+        trim: true
+    },
     inventoryReleasedAt: Date,
+    soldCountCommitted: {
+        type: Boolean,
+        default: false
+    },
     shippedAt: {
         type: Date
     },
@@ -107,5 +128,9 @@ orderSchema.index({
     paymentExpiresAt: 1,
     inventoryReleasedAt: 1
 });
+orderSchema.index(
+    { userId: 1, checkoutSessionId: 1 },
+    { unique: true, partialFilterExpression: { checkoutSessionId: { $type: "string" } } }
+);
 
 export const Order = mongoose.model("Order", orderSchema)

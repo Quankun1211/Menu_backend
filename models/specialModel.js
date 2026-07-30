@@ -23,7 +23,8 @@ const specialSchema = new mongoose.Schema({
   },
   stock: {
     type: Number,
-    required: true
+    required: true,
+    min: 0
   },
   salePercent: {
     type: mongoose.Schema.Types.ObjectId,
@@ -34,7 +35,7 @@ const specialSchema = new mongoose.Schema({
     required: true,
     unique: true
   },
-  soldCount: Number,
+  soldCount: { type: Number, default: 0, min: 0 },
   viewCount: Number,
   favouriteCount: Number,
   region: {

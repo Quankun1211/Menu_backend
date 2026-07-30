@@ -459,7 +459,7 @@ export const login = async (req, res) => {
 
 export const logout = async (req, res) => {
     try {
-        const rawRefresh = req.cookies?.refresh_token;
+        const rawRefresh = req.cookies?.refresh_token || req.body?.token;
         if (rawRefresh) {
           try {
             const decoded = jwt.verify(rawRefresh, process.env.JWT_SECRET);

@@ -21,7 +21,14 @@ const indexSpecs = [
   ["orders", { shipperId: 1, status: 1, updatedAt: -1 }, {}],
   ["orders", { status: 1, createdAt: -1 }, {}],
   ["orders", { paymentMethod: 1, paymentStatus: 1, paymentExpiresAt: 1, inventoryReleasedAt: 1 }, {}],
+  ["orders", { userId: 1, checkoutSessionId: 1 }, {
+    unique: true,
+    partialFilterExpression: { checkoutSessionId: { $type: "string" } },
+  }],
   ["orderitems", { orderId: 1 }, {}],
+  ["paymentattempts", { attemptRef: 1 }, { unique: true }],
+  ["paymentattempts", { orderId: 1, createdAt: -1 }, {}],
+  ["paymentattempts", { status: 1 }, {}],
   ["carts", { userId: 1 }, { unique: true }],
   ["cartitems", { cartId: 1, productId: 1, itemType: 1 }, { unique: true }],
   ["favourites", { userId: 1 }, { unique: true }],
@@ -131,6 +138,25 @@ try {
       await db.collection("authsessions").updateMany(
         { revokedAt: { $ne: null }, cleanupAt: { $exists: false } },
         { $set: { cleanupAt } },
+      );
+    }
+  }
+
+  if (existingNames.has("orders")) {
+    const legacySoldCountOrders = await db.collection("orders").countDocuments({
+      soldCountCommitted: { $exists: false },
+      inventoryReleasedAt: null,
+      status: { $nin: ["cancelled", "payment_failed"] },
+    });
+    report.backfills.legacySoldCountOrders = legacySoldCountOrders;
+    if (apply && legacySoldCountOrders) {
+      await db.collection("orders").updateMany(
+        {
+          soldCountCommitted: { $exists: false },
+          inventoryReleasedAt: null,
+          status: { $nin: ["cancelled", "payment_failed"] },
+        },
+        { $set: { soldCountCommitted: true } },
       );
     }
   }

@@ -11,6 +11,9 @@ import {
 test("order statuses include every persisted status", () => {
   assert.equal(ORDER_STATUSES.includes("completed"), true);
   assert.equal(ORDER_STATUSES.includes("pending_cancel"), true);
+  assert.equal(ORDER_STATUSES.includes("payment_failed"), true);
+  assert.equal(isTerminalOrderStatus("payment_failed"), false);
+  assert.equal(canTransitionOrder("payment_failed", "pending"), true);
 });
 
 test("shipper can only move an assigned order through the delivery workflow", () => {

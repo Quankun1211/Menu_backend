@@ -14,6 +14,7 @@ import { Order } from "./models/ordersModel.js";
 import { rateLimit, securityHeaders } from "./middleware/security.js";
 import { csrfProtection } from "./middleware/csrf.js";
 import { expirePendingPayments } from "./controller/orderController.js";
+import { recoverGatewayCompletedRefunds } from "./controller/orderCancellationController.js";
 import { errorHandler, notFoundHandler, requestLogger } from "./middleware/errorHandler.js";
 import { validateRequestEnvelope } from "./middleware/requestEnvelope.js";
 import { dynamicSitemap } from "./controller/sitemapController.js";
@@ -45,6 +46,8 @@ import menuRoutes from "./routes/menuRoutes/menuRoutes.js"
 import notificationRoutes from "./routes/notificationRoutes.js"
 
 import { connectRedis } from "./config/redis.js"
+import { redisClient } from "./config/redis.js"
+import crypto from "crypto";
 const app = express()
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
@@ -205,9 +208,33 @@ const startServer = async () => {
             console.log(`🚀 Server is running on port ${PORT}`);
             console.log(`📡 Socket.io is ready`);
         });
-        setInterval(() => {
-          expirePendingPayments().catch((error) => console.error("Payment expiry job failed", error.message));
-        }, 60_000).unref();
+        const runPaymentExpiry = async () => {
+          const lockToken = crypto.randomUUID();
+          let locked = false;
+          try {
+            if (redisClient.isReady) {
+              locked = Boolean(await redisClient.set(
+                "lock:payment-expiry",
+                lockToken,
+                { NX: true, EX: 55 },
+              ));
+              if (!locked) return;
+            }
+            for (let batch = 0; batch < 10; batch += 1) {
+              const processed = await expirePendingPayments(io);
+              if (processed < 100) break;
+            }
+            await recoverGatewayCompletedRefunds(io);
+          } catch (error) {
+            console.error("Payment expiry job failed", error.message);
+          } finally {
+            if (locked && await redisClient.get("lock:payment-expiry") === lockToken) {
+              await redisClient.del("lock:payment-expiry");
+            }
+          }
+        };
+        runPaymentExpiry();
+        setInterval(runPaymentExpiry, 60_000).unref();
     } catch (error) {
         console.error("💥 Failed to start application:", error);
         process.exit(1);

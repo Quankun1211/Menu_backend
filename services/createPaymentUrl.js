@@ -5,15 +5,25 @@ function vnpayEncode(str) {
     .replace(/%20/g, '+')
     .replace(/[!'()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
 }
-export const createPaymentUrl = async ({ orderId, amount, ip, platform }) => {
+export const createPaymentUrl = async ({ orderId, paymentRef, amount, ip, platform }) => {
   const tmnCode = process.env.VNP_TMN_CODE;
   const secretKey = process.env.VNP_HASH_SECRET;
   const vnpUrl = process.env.VNP_URL;
   
-  let returnUrl = process.env.VNP_RETURN_URL;
+  let returnUrl =
+    process.env.VNP_RETURN_URL ||
+    process.env.VNPAY_RETURN_URL;
   if (platform === 'web') {
-    returnUrl = "http://localhost:5173/checkout/payment-check";
+    returnUrl =
+      process.env.VNP_WEB_RETURN_URL ||
+      `${process.env.FRONTEND_URL || "http://localhost:5173"}/checkout/payment-check`;
+  } else if (platform === "mobile") {
+    returnUrl =
+      process.env.VNP_MOBILE_RETURN_URL ||
+      process.env.VNP_IPN_URL?.replace(/\/vnpay-ipn$/, "/vnpay-return") ||
+      returnUrl;
   }
+  if (!returnUrl) throw new Error("Thiếu cấu hình VNPay Return URL");
 
   const date = new Date();
   const createDate = format(date, 'yyyyMMddHHmmss');
@@ -27,7 +37,7 @@ export const createPaymentUrl = async ({ orderId, amount, ip, platform }) => {
     vnp_TmnCode: tmnCode,
     vnp_Locale: 'vn',
     vnp_CurrCode: 'VND',
-    vnp_TxnRef: orderId.toString(),
+    vnp_TxnRef: String(paymentRef || orderId),
     vnp_OrderInfo: 'Thanh toan don hang ' + orderId,
     vnp_OrderType: 'other',
     vnp_Amount: Math.round(amount * 100),
@@ -49,5 +59,8 @@ const signData = queryParams;
 const hmac = crypto.createHmac("sha512", secretKey);
 const signed = hmac.update(Buffer.from(signData, 'utf-8')).digest("hex");
 
-return `${vnpUrl}?${queryParams}&vnp_SecureHash=${signed}`;
+return {
+  url: `${vnpUrl}?${queryParams}&vnp_SecureHash=${signed}`,
+  createDate,
+};
 };

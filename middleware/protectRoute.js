@@ -14,6 +14,9 @@ export const protectRoute = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    if (decoded.tokenType !== "access") {
+      return res.status(401).json({ error: "Token không đúng mục đích sử dụng" });
+    }
 
     const user = await User.findById(decoded.userId).select("-password");
 
@@ -58,6 +61,9 @@ export const optionalProtectRoute = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    if (decoded.tokenType !== "access") {
+      return next();
+    }
     const user = await User.findById(decoded.userId).select("-password");
 
     if (user) {

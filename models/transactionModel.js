@@ -27,15 +27,19 @@ const TransactionSchema = new mongoose.Schema({
   },
   status: { 
     type: String, 
-    enum: ['pending', 'processing', 'completed', 'failed', 'refunded'], 
+    enum: ['pending', 'processing', 'completed', 'failed', 'cancelled', 'refunded'],
     default: 'pending' 
   },
   gatewayDetails: {
     transactionId: String, 
     responseCode: String,  
     payDate: Date,
+    rawPayDate: String,
     bankCode: String,
-    rawLog: Object      
+    rawLog: Object,
+    refundResponseCode: String,
+    refundTransactionNo: String,
+    refundedAt: Date,
   },
   description: String,
   ipAddress: String,

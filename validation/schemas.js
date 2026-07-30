@@ -44,12 +44,13 @@ export const registerSchema = Joi.object({
   confirmPassword: Joi.ref("password"),
 });
 export const orderSchema = Joi.object({
-  items: Joi.array().items(productItem).min(1).max(100).required(),
+  items: Joi.array().items(productItem).min(1).max(100).unique("productId").required(),
   address: objectId.required(),
   couponCode: Joi.string().trim().uppercase().max(50).allow("", null),
   source: Joi.string().valid("cart", "buy_now", "menu", "recipe").required(),
   paymentMethod: Joi.string().valid("cod", "vnpay").required(),
-  platform: Joi.string().valid("web").default("web"),
+  platform: Joi.string().valid("web", "mobile").default("web"),
+  checkoutSessionId: Joi.string().guid({ version: ["uuidv4"] }).required(),
 });
 
 export const emailSchema = Joi.object({
@@ -184,6 +185,6 @@ export const adminUserUpdateSchema = adminUserSchema
 export const assignOrderSchema = Joi.object({ orderId: objectId.required(), shipperId: objectId.required() });
 export const adminCancelSchema = Joi.object({
   orderId: objectId.required(),
-  action: Joi.string().valid("approve", "reject"),
+  action: Joi.string().valid("accept", "reject"),
   adminNote: Joi.string().trim().max(500).allow(""),
 });

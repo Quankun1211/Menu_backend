@@ -6,7 +6,13 @@ import request from "supertest";
 import { authorizeRole } from "../middleware/protectRoute.js";
 import { csrfProtection } from "../middleware/csrf.js";
 import { validate } from "../middleware/validate.js";
-import { orderSchema, paginationQuery, shippingFeeSchema } from "../validation/schemas.js";
+import {
+  adminCancelSchema,
+  cancelOrderSchema,
+  orderSchema,
+  paginationQuery,
+  shippingFeeSchema,
+} from "../validation/schemas.js";
 import { validateRequestEnvelope } from "../middleware/requestEnvelope.js";
 import { getCsrfToken } from "../controller/authController.js";
 
@@ -25,6 +31,8 @@ app.post(
 app.post("/order", validate(orderSchema), (_req, res) => res.status(201).json({ ok: true }));
 app.get("/pagination", validate(paginationQuery, "query"), (req, res) => res.json(req.query));
 app.put("/shipping", validate(shippingFeeSchema), (req, res) => res.json(req.body));
+app.post("/cancel", validate(cancelOrderSchema), (req, res) => res.json(req.body));
+app.patch("/admin-cancel", validate(adminCancelSchema), (req, res) => res.json(req.body));
 
 test("CSRF blocks mutation without matching cookie and header", async () => {
   const response = await request(app).post("/mutate").send({});
@@ -71,6 +79,30 @@ test("order validation rejects client shippingFee and invalid quantities", async
   assert.equal(response.status, 400);
 });
 
+test("order validation requires idempotency and rejects duplicate products", async () => {
+  const objectId = "507f1f77bcf86cd799439011";
+  const baseOrder = {
+    items: [{ productId: objectId, quantity: 1 }],
+    address: objectId,
+    source: "cart",
+    paymentMethod: "vnpay",
+    platform: "web",
+  };
+
+  const missingKey = await request(app).post("/order").send(baseOrder);
+  assert.equal(missingKey.status, 400);
+
+  const duplicateItems = await request(app).post("/order").send({
+    ...baseOrder,
+    checkoutSessionId: "af7b92c2-7ac8-4f9a-847b-2ac433a89422",
+    items: [
+      { productId: objectId, quantity: 1 },
+      { productId: objectId, quantity: 1 },
+    ],
+  });
+  assert.equal(duplicateItems.status, 400);
+});
+
 test("request envelope rejects Mongo operators and excessive nesting", async () => {
   const operatorResponse = await request(app).post("/envelope").send({
     filter: { $where: "malicious" },
@@ -100,4 +132,23 @@ test("shipping fee validation accepts free shipping and rejects invalid values",
   assert.equal(freeShipping.body.shippingFee, 0);
   assert.equal((await request(app).put("/shipping").send({ shippingFee: -1 })).status, 400);
   assert.equal((await request(app).put("/shipping").send({ shippingFee: 10_000_001 })).status, 400);
+});
+
+test("customer cancellation requires a reason of at least five characters", async () => {
+  assert.equal((await request(app).post("/cancel").send({ reason: "đổi" })).status, 400);
+  const valid = await request(app).post("/cancel").send({ reason: "  Đặt nhầm món  " });
+  assert.equal(valid.status, 200);
+  assert.equal(valid.body.reason, "Đặt nhầm món");
+});
+
+test("admin cancellation accepts the same action values sent by the admin UI", async () => {
+  const payload = { orderId: "507f1f77bcf86cd799439011" };
+  assert.equal(
+    (await request(app).patch("/admin-cancel").send({ ...payload, action: "accept" })).status,
+    200,
+  );
+  assert.equal(
+    (await request(app).patch("/admin-cancel").send({ ...payload, action: "approve" })).status,
+    400,
+  );
 });

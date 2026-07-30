@@ -13,6 +13,20 @@ import { Transaction } from '../models/transactionModel.js';
 import { sendInternalNotification } from "./notificationController.js";
 import crypto from 'crypto';
 
+const parseVnpayDate = (value) => {
+  if (!/^\d{14}$/.test(String(value))) return undefined;
+  const text = String(value);
+  const parsed = new Date(
+    Number(text.slice(0, 4)),
+    Number(text.slice(4, 6)) - 1,
+    Number(text.slice(6, 8)),
+    Number(text.slice(8, 10)),
+    Number(text.slice(10, 12)),
+    Number(text.slice(12, 14)),
+  );
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+};
+
 const enrichOrderItems = async (orderItems) => {
   if (!orderItems.length) return [];
 
@@ -41,21 +55,82 @@ const enrichOrderItems = async (orderItems) => {
 import qs from 'qs';
 import { sortObject } from '../utils/helper.js';
 import { validateAndCalculateCoupon } from "../utils/helper.js";
-import { createPaymentUrl } from "../services/createPaymentUrl.js";
 import { triggerAIUpdate } from "../utils/trackingUserBehavior.js";
 
 import { UserBehavior } from "../models/userBehaviorModel.js";
 import { Address } from "../models/addressModel.js";
 import { getShippingFeeValue } from "./configController.js";
+import { startVnpayAttempt } from "../services/startVnpayAttempt.js";
+import { PaymentAttempt } from "../models/paymentAttemptModel.js";
+import { formatVnpayDate, queryVnpayTransaction } from "../utils/vnpayQuery.js";
 
 export const createOrder = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
   let isCommitted = false;
+  let checkoutSessionId;
 
   try {
     const userId = req.user.id;
-    const { items, address, couponCode, source, paymentMethod = "cod", platform = "web" } = req.body;
+    const {
+      items,
+      address,
+      couponCode,
+      source,
+      paymentMethod = "cod",
+      platform = "web",
+      checkoutSessionId: requestCheckoutSessionId,
+    } = req.body;
+    checkoutSessionId = requestCheckoutSessionId;
+    const existingOrder = await Order.findOne({ userId, checkoutSessionId });
+    if (existingOrder) {
+      await session.abortTransaction();
+      await session.endSession();
+      if (
+        existingOrder.paymentMethod === "vnpay" &&
+        ["pending", "checking"].includes(existingOrder.paymentStatus) &&
+        !existingOrder.inventoryReleasedAt
+      ) {
+        const payment = await startVnpayAttempt({
+          order: existingOrder,
+          userId,
+          ip: req.ip,
+          platform,
+        });
+        return res.status(200).json({
+          success: true,
+          message: "Yêu cầu đặt hàng đã được xử lý trước đó",
+          data: {
+            orderId: existingOrder._id,
+            totalPrice: existingOrder.totalPrice,
+            paymentUrl: payment.paymentUrl,
+          },
+        });
+      }
+      return res.status(200).json({
+        success: true,
+        message: "Yêu cầu đặt hàng đã được xử lý trước đó",
+        data: {
+          orderId: existingOrder._id,
+          totalPrice: existingOrder.totalPrice,
+          paymentStatus: existingOrder.paymentStatus,
+        },
+      });
+    }
+    if (paymentMethod === "vnpay") {
+      const pendingPayments = await Order.countDocuments({
+        userId,
+        paymentMethod: "vnpay",
+        paymentStatus: { $in: ["pending", "checking"] },
+        inventoryReleasedAt: null,
+      }).session(session);
+      if (pendingPayments >= 3) {
+        const error = new Error("Bạn đang có quá nhiều đơn chờ thanh toán VNPay");
+        error.statusCode = 429;
+        error.errorCode = "TOO_MANY_PENDING_PAYMENTS";
+        throw error;
+      }
+    }
     if (!["cod", "vnpay"].includes(paymentMethod)) throw new Error("Phương thức thanh toán không hợp lệ");
     const ownedAddress = await Address.findOne({ _id: address, userId }).session(session);
     if (!ownedAddress) throw new Error("Địa chỉ giao hàng không hợp lệ");
@@ -76,7 +151,18 @@ export const createOrder = async (req, res) => {
         || specials.find(p => p._id.toString() === item.productId);
       const itemType = product?.constructor.modelName === "Special" ? "Special" : "Product";
       if (!product) throw new Error(`Sản phẩm ID ${item.productId} không tồn tại`);
-      if (product.stock < item.quantity) throw new Error(`Sản phẩm ${product.name} không đủ tồn kho`);
+      if (product.stock < item.quantity) {
+        const error = new Error(`Sản phẩm ${product.name} không đủ tồn kho`);
+        error.statusCode = 409;
+        error.errorCode = "INSUFFICIENT_STOCK";
+        error.details = {
+          productId: product._id,
+          productName: product.name,
+          requestedQuantity: item.quantity,
+          availableQuantity: product.stock,
+        };
+        throw error;
+      }
 
       let finalPrice = product.price;
       let salePercent = 0;
@@ -101,11 +187,19 @@ export const createOrder = async (req, res) => {
       const ItemModel = itemType === "Special" ? Special : Product;
       const stockUpdate = await ItemModel.updateOne(
         { _id: product._id, stock: { $gte: item.quantity }, isActive: true },
-        { $inc: { stock: -item.quantity, soldCount: item.quantity } },
+        { $inc: { stock: -item.quantity } },
         { session }
       );
       if (stockUpdate.modifiedCount !== 1) {
-        throw new Error(`Sản phẩm ${product.name} vừa hết hàng`);
+        const error = new Error(`Sản phẩm ${product.name} vừa hết hàng`);
+        error.statusCode = 409;
+        error.errorCode = "INSUFFICIENT_STOCK";
+        error.details = {
+          productId: product._id,
+          productName: product.name,
+          requestedQuantity: item.quantity,
+        };
+        throw error;
       }
     }
 
@@ -137,6 +231,20 @@ export const createOrder = async (req, res) => {
     }
 
     const finalTotalPrice = Math.max(subTotal + shippingFee - couponDiscount, 0);
+    const soldCountCommitted = paymentMethod === "cod" || finalTotalPrice === 0;
+    if (soldCountCommitted) {
+      for (const item of orderItems) {
+        const ItemModel = item.itemType === "Special" ? Special : Product;
+        const soldUpdate = await ItemModel.updateOne(
+          { _id: item.productId },
+          { $inc: { soldCount: item.quantity } },
+          { session },
+        );
+        if (soldUpdate.modifiedCount !== 1) {
+          throw new Error(`Không thể cập nhật số lượng bán của ${item.productName}`);
+        }
+      }
+    }
 
     const [order] = await Order.create([{
       userId,
@@ -147,8 +255,10 @@ export const createOrder = async (req, res) => {
       shippingFee,
       address,
       source,
+      checkoutSessionId,
       paymentMethod,
       paymentStatus: finalTotalPrice === 0 ? "paid" : "pending",
+      soldCountCommitted,
       paymentExpiresAt: paymentMethod === "vnpay" ? new Date(Date.now() + 15 * 60 * 1000) : null
     }], { session });
 
@@ -178,12 +288,14 @@ export const createOrder = async (req, res) => {
     let paymentUrl;
     if (finalTotalPrice > 0 && paymentMethod === "vnpay") {
       try {
-        paymentUrl = await createPaymentUrl({
-          orderId: order._id,
-          amount: finalTotalPrice,
+        const payment = await startVnpayAttempt({
+          order,
+          userId,
           ip: req.ip,
           platform,
+          expectedStatuses: ["pending"],
         });
+        paymentUrl = payment.paymentUrl;
       } catch (paymentError) {
         try {
           await releasePendingOrderInventory(order._id, "payment_url_creation_failed");
@@ -211,11 +323,25 @@ export const createOrder = async (req, res) => {
 
     const firstProductImage = orderItems[0]?.productImage || "";
 
-    sendInternalNotification(
+    const isPaymentConfirmedAtCreation =
+      finalTotalPrice === 0 || paymentMethod === "cod";
+    await sendInternalNotification(
       userId,
-      "Đặt hàng thành công",
-      `Đơn hàng đã được khởi tạo thành công.`,
-      { orderId: order._id, type: "order_created" },
+      isPaymentConfirmedAtCreation
+        ? "Đặt hàng thành công"
+        : "Đơn hàng chờ thanh toán",
+      isPaymentConfirmedAtCreation
+        ? "Đơn hàng đã được khởi tạo thành công."
+        : `Đơn hàng #${String(order._id).slice(-6).toUpperCase()} đã được tạo và đang chờ thanh toán VNPay.`,
+      {
+        orderId: order._id,
+        type: isPaymentConfirmedAtCreation
+          ? "order_created"
+          : "payment_pending",
+        paymentStatus: isPaymentConfirmedAtCreation
+          ? order.paymentStatus
+          : "pending",
+      },
       firstProductImage
     );
 
@@ -235,56 +361,175 @@ export const createOrder = async (req, res) => {
     console.error("❌ CRITICAL ERROR in createOrder:", err.message);
     if (!isCommitted) await session.abortTransaction();
     session.endSession();
-    return res.status(500).json({ success: false, message: err.message });
+    if (err?.code === 11000 && checkoutSessionId) {
+      const duplicateOrder = await Order.findOne({
+        userId: req.user.id,
+        checkoutSessionId,
+      });
+      if (duplicateOrder) {
+        return res.status(200).json({
+          success: true,
+          message: "Yêu cầu đặt hàng đã được xử lý trước đó",
+          data: {
+            orderId: duplicateOrder._id,
+            totalPrice: duplicateOrder.totalPrice,
+            paymentStatus: duplicateOrder.paymentStatus,
+          },
+        });
+      }
+    }
+    const transientConflict = err?.hasErrorLabel?.("TransientTransactionError");
+    const status = err.statusCode || (transientConflict ? 409 : 500);
+    return res.status(status).json({
+      success: false,
+      code: err.errorCode || (transientConflict ? "ORDER_CONFLICT_RETRY" : "ORDER_CREATE_FAILED"),
+      message: transientConflict
+        ? "Tồn kho vừa thay đổi, vui lòng thử đặt hàng lại"
+        : err.message,
+      ...(err.details && { details: err.details }),
+    });
   }
 };
-export const releasePendingOrderInventory = async (orderId, reason = "payment_failed") => {
+export const releasePendingOrderInventory = async (
+  orderId,
+  reason = "payment_failed",
+  { io = null } = {},
+) => {
   const releaseSession = await mongoose.startSession();
+  let releasedOrder = null;
   try {
-    return await releaseSession.withTransaction(async () => {
+    await releaseSession.withTransaction(async () => {
+      const wasCancelledByUser = ["vnpay_24", "payment_abandoned"].includes(reason);
+      const paymentStatus = wasCancelledByUser ? "cancelled" : "failed";
       const order = await Order.findOneAndUpdate(
-        { _id: orderId, paymentStatus: "pending", inventoryReleasedAt: null },
         {
-          paymentStatus: "failed",
-          status: "cancelled",
-          cancelledAt: new Date(),
-          cancelReason: reason,
-          inventoryReleasedAt: new Date(),
+          _id: orderId,
+          paymentStatus: { $in: ["pending", "checking"] },
+          inventoryReleasedAt: null,
         },
-        { new: true, session: releaseSession },
+        {
+          $set: {
+            paymentStatus,
+            status: "payment_failed",
+            cancelReason: reason,
+            inventoryReleasedAt: new Date(),
+          },
+          $unset: { cancelledAt: 1, cancelledBy: 1 },
+        },
+        { returnDocument: "after", session: releaseSession },
       );
-      if (!order) return false;
+      if (!order) return;
       const items = await OrderItem.find({ orderId }).session(releaseSession);
       for (const item of items) {
         const ItemModel = item.itemType === "Special" ? Special : Product;
-        await ItemModel.updateOne(
+        const restored = await ItemModel.updateOne(
           { _id: item.productId },
-          { $inc: { stock: item.quantity, soldCount: -item.quantity } },
+          {
+            $inc: {
+              stock: item.quantity,
+              ...(order.soldCountCommitted && { soldCount: -item.quantity }),
+            },
+          },
           { session: releaseSession },
         );
+        if (restored.matchedCount !== 1 || restored.modifiedCount !== 1) {
+          throw new Error(`Không thể hoàn tồn kho sản phẩm ${item.productId}`);
+        }
       }
       await Transaction.updateOne(
         { orderId },
-        { status: "failed", "gatewayDetails.responseCode": reason },
+        { status: paymentStatus, "gatewayDetails.responseCode": reason },
         { session: releaseSession },
       );
-      return true;
+      if (order.currentPaymentRef) {
+        await PaymentAttempt.updateOne(
+          { attemptRef: order.currentPaymentRef, status: "pending" },
+          {
+            status: wasCancelledByUser ? "cancelled" : "failed",
+            responseCode: reason,
+          },
+          { session: releaseSession },
+        );
+      }
+      releasedOrder = order;
     });
   } finally {
     await releaseSession.endSession();
   }
+
+  if (!releasedOrder) return null;
+
+  const userCancelled = releasedOrder.paymentStatus === "cancelled";
+  await sendInternalNotification(
+    releasedOrder.userId,
+    userCancelled ? "Đã hủy thanh toán VNPay" : "Thanh toán VNPay không thành công",
+    userCancelled
+      ? `Phiên thanh toán của đơn #${String(releasedOrder._id).slice(-6).toUpperCase()} đã được hủy. Đơn được lưu với trạng thái thanh toán không thành công.`
+      : `Đơn hàng #${String(releasedOrder._id).slice(-6).toUpperCase()} được chuyển sang trạng thái thanh toán không thành công hoặc hết thời hạn.`,
+    {
+      orderId: releasedOrder._id,
+      type: userCancelled ? "payment_cancelled" : "payment_failed",
+      paymentStatus: releasedOrder.paymentStatus,
+      reason,
+    },
+    null,
+    io,
+  );
+  emitOrderUpdated(io, releasedOrder);
+  return releasedOrder;
 };
 
-export const expirePendingPayments = async () => {
+export const expirePendingPayments = async (io = null) => {
   const orders = await Order.find({
     paymentMethod: "vnpay",
-    paymentStatus: "pending",
+    paymentStatus: { $in: ["pending", "checking"] },
     paymentExpiresAt: { $lte: new Date() },
     inventoryReleasedAt: null,
-  }).select("_id").limit(100);
+  }).select("_id currentPaymentRef paymentRequestDate createdAt paymentCheckAttempts").limit(100);
   for (const order of orders) {
-    await releasePendingOrderInventory(order._id, "payment_expired");
+    try {
+      const queryResult = await queryVnpayTransaction({
+        orderId: order.currentPaymentRef || order._id,
+        transactionDate:
+          order.paymentRequestDate || formatVnpayDate(order.createdAt),
+        ipAddress: "127.0.0.1",
+      });
+      if (
+        queryResult.vnp_ResponseCode === "00" &&
+        queryResult.vnp_TransactionStatus === "00"
+      ) {
+        const { confirmVerifiedVnpayPayment } = await import(
+          "./vnpayCallbackController.js"
+        );
+        await confirmVerifiedVnpayPayment(queryResult, io);
+        continue;
+      }
+      if (
+        queryResult.vnp_ResponseCode === "00" &&
+        ["02", "04", "07", "09"].includes(queryResult.vnp_TransactionStatus)
+      ) {
+        await releasePendingOrderInventory(order._id, "payment_expired", { io });
+        continue;
+      }
+      throw new Error(queryResult.vnp_Message || "VNPay query inconclusive");
+    } catch (error) {
+      const attempts = (order.paymentCheckAttempts || 0) + 1;
+      const retryMinutes = Math.min(5 * attempts, 30);
+      await Order.updateOne(
+        {
+          _id: order._id,
+          paymentStatus: { $in: ["pending", "checking"] },
+          inventoryReleasedAt: null,
+        },
+        {
+          paymentStatus: "checking",
+          paymentCheckAttempts: attempts,
+          paymentExpiresAt: new Date(Date.now() + retryMinutes * 60 * 1000),
+        },
+      );
+    }
   }
+  return orders.length;
 };
 
 export const vnpayIPN = async (req, res) => {
@@ -376,7 +621,8 @@ export const vnpayIPN = async (req, res) => {
             transactionId: vnp_Params['vnp_TransactionNo'], 
             responseCode: rspCode, 
             bankCode: vnp_Params['vnp_BankCode'], 
-            payDate: vnp_Params['vnp_PayDate'] 
+            payDate: parseVnpayDate(vnp_Params['vnp_PayDate']),
+            rawPayDate: vnp_Params['vnp_PayDate'],
           } 
         }, 
         { session: paymentSession }
@@ -512,7 +758,9 @@ export const getMyOrders = async (req, res) => {
         productSummary,
         thumbnail,
         itemsForRebuy: items,
-        deliveredAt: order.deliveredAt
+        deliveredAt: order.deliveredAt,
+        paymentMethod: order.paymentMethod,
+        paymentStatus: order.paymentStatus
       };
     });
 
@@ -583,6 +831,8 @@ export const getOrderDetail = async (req, res) => {
         totalPrice: order.totalPrice,
         createdAt: order.createdAt,
         paymentStatus: order.paymentStatus,
+        paymentMethod: order.paymentMethod,
+        paymentExpiresAt: order.paymentExpiresAt,
         paidAt: order.paidAt,
         lastKnownLocation: order.lastKnownLocation,
         deliveredAt: order.deliveredAt,

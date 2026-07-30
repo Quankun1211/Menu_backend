@@ -2,26 +2,37 @@ import axios from 'axios';
 import crypto from 'crypto';
 import { format } from 'date-fns';
 
-export const refundOrderLogic = async ({ orderId, amount, transactionDate, user }) => {
+export const refundOrderLogic = async ({
+  orderId,
+  paymentRef,
+  amount,
+  transactionDate,
+  transactionNo = "",
+  user,
+  ipAddress = "127.0.0.1",
+}) => {
   try {
     const vnp_TmnCode = process.env.VNP_TMN_CODE;
     const secretKey = process.env.VNP_HASH_SECRET;
     const vnp_Api = "https://sandbox.vnpayment.vn/merchant_webapi/api/transaction";
 
     const date = new Date();
-    const vnp_RequestId = format(date, 'HHmmss'); 
+    const vnp_RequestId = `${format(date, 'yyyyMMddHHmmss')}${crypto.randomBytes(6).toString('hex')}`;
     const vnp_Version = '2.1.0';
     const vnp_Command = 'refund';
     const vnp_TransactionType = '02'; 
     const vnp_Amount = amount * 100;
-    const vnp_TxnRef = orderId.toString();
+    const vnp_TxnRef = String(paymentRef || orderId);
     const vnp_OrderInfo = `Hoan tien don hang ${orderId}`;
     
-    const vnp_TransactionDate = format(new Date(transactionDate), 'yyyyMMddHHmmss');
+    const vnp_TransactionDate = /^\d{14}$/.test(String(transactionDate))
+      ? String(transactionDate)
+      : format(new Date(transactionDate), 'yyyyMMddHHmmss');
     
     const vnp_CreateDate = format(date, 'yyyyMMddHHmmss');
-    const vnp_CreateBy = user || 'admin';
-    const vnp_IpAddr = '127.0.0.1'; 
+    const vnp_CreateBy =
+      String(user || "admin").replace(/[^a-zA-Z0-9]/g, "").slice(0, 32) || "admin";
+    const vnp_IpAddr = ipAddress;
 
     const signData = [
       vnp_RequestId,
@@ -31,7 +42,7 @@ export const refundOrderLogic = async ({ orderId, amount, transactionDate, user 
       vnp_TransactionType,
       vnp_TxnRef,
       vnp_Amount,
-      '', 
+      transactionNo,
       vnp_TransactionDate,
       vnp_CreateBy,
       vnp_CreateDate,
@@ -50,7 +61,7 @@ export const refundOrderLogic = async ({ orderId, amount, transactionDate, user 
       vnp_TransactionType,
       vnp_TxnRef,
       vnp_Amount,
-      vnp_TransactionNo: '',
+      vnp_TransactionNo: transactionNo,
       vnp_TransactionDate,
       vnp_CreateBy,
       vnp_CreateDate,

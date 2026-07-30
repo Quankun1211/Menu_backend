@@ -6,3 +6,4 @@ dist/
 config/serviceAccountKey.json
 
 .github
+.data-reset-backups/

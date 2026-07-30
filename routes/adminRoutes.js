@@ -13,7 +13,8 @@ import {
   paginationQuery,
   saleSchema,
 } from "../validation/schemas.js"
-import { approveCancelOrder, assignOrderToShipper, createCategory, createIngredient, createMenu, createProduct, createRecipeAdmin, createSale, deleteCategory, deleteIngredient, deleteMenu, deleteProductAdmin, deleteRecipeAdmin, deleteSale, deleteSpecialAdmin, deleteUser, getAdminAndShippers, getAllIngredientsAdmin, getAllMenus, getAllOrders, getAllRecipesAdmin, getAllSalesAdmin, getCategories, getMenuById, getProductDetailAdmin, getProducts, getRecipeByIdAdmin, getSaleItems, getSpecialDetailAdmin, getSpecials, processCancelOrder, registerUser, updateCategory, updateIngredient, updateMenu, updateProductAdmin, updateRecipeAdmin, updateSale, updateSpecialAdmin, updateUser } from "../controller/adminController.js"
+import { assignOrderToShipper, createCategory, createIngredient, createMenu, createProduct, createRecipeAdmin, createSale, deleteCategory, deleteIngredient, deleteMenu, deleteProductAdmin, deleteRecipeAdmin, deleteSale, deleteSpecialAdmin, deleteUser, getAdminAndShippers, getAllIngredientsAdmin, getAllMenus, getAllOrders, getAllRecipesAdmin, getAllSalesAdmin, getCategories, getMenuById, getProductDetailAdmin, getProducts, getRecipeByIdAdmin, getSaleItems, getSpecialDetailAdmin, getSpecials, registerUser, updateCategory, updateIngredient, updateMenu, updateProductAdmin, updateRecipeAdmin, updateSale, updateSpecialAdmin, updateUser } from "../controller/adminController.js"
+import { processShipperCancellation } from "../controller/orderCancellationController.js"
 const router = express.Router()
 
 // Get
@@ -62,8 +63,17 @@ router.delete("/recipe-delete/:id", protectRoute, authorizeRole(["admin", "super
 router.delete("/menu-delete/:id", protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), deleteMenu);
 
 // Admin role
-router.patch("/process-cancel", protectRoute, authorizeRole(["admin", "super_admin"]), validate(adminCancelSchema), processCancelOrder);
+router.patch("/process-cancel", protectRoute, authorizeRole(["admin", "super_admin"]), validate(adminCancelSchema), processShipperCancellation);
 router.post("/assign-order", protectRoute, authorizeRole(["admin", "super_admin"]), validate(assignOrderSchema), assignOrderToShipper)
-router.post("/approve-order-cancelled", protectRoute, authorizeRole(["admin", "super_admin"]), validate(adminCancelSchema), approveCancelOrder)
+router.post(
+  "/approve-order-cancelled",
+  protectRoute,
+  authorizeRole(["admin", "super_admin"]),
+  validate(adminCancelSchema),
+  (req, res) => {
+    req.body.action = "accept";
+    return processShipperCancellation(req, res);
+  },
+)
 
 export default router
