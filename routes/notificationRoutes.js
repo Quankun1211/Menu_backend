@@ -6,9 +6,9 @@ import { notificationSchema, objectIdParams } from "../validation/schemas.js"
 
 const router = express.Router()
 
-router.post(["/send-notification", "/"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(notificationSchema), createNotificationFromApi)
-router.get(["/get", "/"], optionalProtectRoute, getNotification)
-router.patch(["/read-all", "/read-status"], protectRoute, readAllNotifications);
-router.patch(["/read/:id", "/:id/read-status"], protectRoute, validate(objectIdParams(), "params"), readNotification)
+router.post("/", protectRoute, authorizeRole(["admin", "super_admin"]), validate(notificationSchema), createNotificationFromApi)
+router.get("/", optionalProtectRoute, getNotification)
+router.patch("/", protectRoute, readAllNotifications);
+router.patch("/:id", protectRoute, validate(objectIdParams(), "params"), readNotification)
 
 export default router

@@ -1,12 +1,10 @@
-import express from "express"
-import upload from "../middleware/upload.js"
-import { getAllSalesAdmin, getSaleItems } from "../controller/saleController.js"
-import { validate } from "../middleware/validate.js"
-import { paginationQuery } from "../validation/schemas.js"
-import { authorizeRole, protectRoute } from "../middleware/protectRoute.js"
-const router = express.Router()
+import express from "express";
+import { getSaleItems } from "../controller/saleController.js";
+import { validate } from "../middleware/validate.js";
+import { paginationQuery } from "../validation/schemas.js";
 
-router.get(["/get-item", "/"], validate(paginationQuery, "query"), getSaleItems)
-router.get(["/get-admin", "/admin"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(paginationQuery, "query"), getAllSalesAdmin)
+const router = express.Router();
 
-export default router
+router.get("/", validate(paginationQuery, "query"), getSaleItems);
+
+export default router;

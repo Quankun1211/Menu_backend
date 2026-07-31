@@ -5,11 +5,11 @@ import { validate } from "../middleware/validate.js"
 import { addressSchema, addressUpdateSchema, objectIdParams } from "../validation/schemas.js"
 const router = express.Router()
 
-router.post(["/add", "/"], protectRoute, validate(addressSchema), addAddress)
-router.get(["/get", "/"], protectRoute, getAddresses)
-router.get(["/get-detail/:addressId", "/:addressId"], protectRoute, validate(objectIdParams("addressId"), "params"), getAddressById)
-router.put(["/update/:addressId", "/:addressId"], protectRoute, validate(objectIdParams("addressId"), "params"), validate(addressUpdateSchema), updateAddress)
-router.put(["/default/:addressId", "/:addressId/default"], protectRoute, validate(objectIdParams("addressId"), "params"), setDefaultAddress)
-router.delete(["/remove/:addressId", "/:addressId"], protectRoute, validate(objectIdParams("addressId"), "params"), deleteAddress)
+router.post("/", protectRoute, validate(addressSchema), addAddress)
+router.get("/", protectRoute, getAddresses)
+router.get("/:addressId", protectRoute, validate(objectIdParams("addressId"), "params"), getAddressById)
+router.put("/:addressId", protectRoute, validate(objectIdParams("addressId"), "params"), validate(addressUpdateSchema), updateAddress)
+router.put("/:addressId/default", protectRoute, validate(objectIdParams("addressId"), "params"), setDefaultAddress)
+router.delete("/:addressId", protectRoute, validate(objectIdParams("addressId"), "params"), deleteAddress)
 
 export default router

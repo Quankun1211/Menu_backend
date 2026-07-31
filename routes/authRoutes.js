@@ -1,23 +1,42 @@
-import express from "express"
-import { signUp, login, logout, verifyOTP, resendOTP, forgotPassword, resetPassword, createSuperAdmin, refreshAccessToken, getCsrfToken, googleLogin, facebookLogin } from "../controller/authController.js"
-import { rateLimit } from "../middleware/security.js"
-import { validate } from "../middleware/validate.js"
-import { emailSchema, loginSchema, otpSchema, refreshSchema, registerSchema, resetPasswordSchema, socialLoginSchema } from "../validation/schemas.js"
+import express from "express";
+import {
+  facebookLogin,
+  forgotPassword,
+  getCsrfToken,
+  googleLogin,
+  login,
+  logout,
+  refreshAccessToken,
+  resendOTP,
+  resetPassword,
+  signUp,
+  verifyOTP,
+} from "../controller/authController.js";
+import { rateLimit } from "../middleware/security.js";
+import { validate } from "../middleware/validate.js";
+import {
+  emailSchema,
+  loginSchema,
+  otpSchema,
+  refreshSchema,
+  registerSchema,
+  resetPasswordSchema,
+  socialLoginSchema,
+} from "../validation/schemas.js";
 
-const router = express.Router()
+const router = express.Router();
 
 router.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 20 }));
-router.post("/register", validate(registerSchema), signUp)
-router.post('/verify-otp', validate(otpSchema), verifyOTP);
-router.post('/resend-otp', validate(emailSchema), resendOTP);
-router.post('/forgot-password', validate(emailSchema), forgotPassword);
-router.post('/reset-password', validate(resetPasswordSchema), resetPassword);
-router.post("/login", validate(loginSchema), login)
-router.post("/google", validate(socialLoginSchema), googleLogin)
-router.post("/facebook", validate(socialLoginSchema), facebookLogin)
-router.get("/csrf", getCsrfToken)
-router.post("/refresh", validate(refreshSchema), refreshAccessToken)
-router.post("/logout", logout)
+router.post("/registrations", validate(registerSchema), signUp);
+router.post("/email-verifications", validate(otpSchema), verifyOTP);
+router.post("/email-verification-deliveries", validate(emailSchema), resendOTP);
+router.post("/password-reset-requests", validate(emailSchema), forgotPassword);
+router.put("/password-resets", validate(resetPasswordSchema), resetPassword);
+router.post("/sessions", validate(loginSchema), login);
+router.delete("/sessions", logout);
+router.post("/session-refreshes", validate(refreshSchema), refreshAccessToken);
+router.post("/identity-providers/google/sessions", validate(socialLoginSchema), googleLogin);
+router.post("/identity-providers/facebook/sessions", validate(socialLoginSchema), facebookLogin);
+router.get("/csrf-tokens", getCsrfToken);
 
-// router.post("/create-supper-admin", createSuperAdmin)
-export default router
+export default router;

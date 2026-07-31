@@ -26,6 +26,7 @@ export const paginationQuery = Joi.object({
   region: Joi.string().valid("all", "bac", "trung", "nam"),
   category: objectId,
   categoryId: Joi.alternatives().try(objectId, Joi.string().valid("all")),
+  view: Joi.string().valid("popular", "deals", "suggested", "latest"),
 }).unknown(true);
 export const loginSchema = Joi.object({
   username: Joi.string().trim().lowercase().min(3).max(254).required(),

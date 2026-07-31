@@ -7,6 +7,6 @@ import { categoryViewSchema } from "../validation/schemas.js"
 const router = express.Router()
 
 router.get("/me", protectRoute, getMe)
-router.post(["/track-view", "/view-history"], protectRoute, validate(categoryViewSchema), trackView)
+router.post("/view-history", protectRoute, validate(categoryViewSchema), trackView)
 
 export default router

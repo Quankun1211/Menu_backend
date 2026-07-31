@@ -1,7 +1,7 @@
-import express from "express"
-import upload from "../middleware/upload.js"
-import { protectRoute, authorizeRole } from "../middleware/protectRoute.js"
-import { validate } from "../middleware/validate.js"
+import express from "express";
+import upload from "../middleware/upload.js";
+import { protectRoute, authorizeRole } from "../middleware/protectRoute.js";
+import { validate } from "../middleware/validate.js";
 import {
   adminCancelSchema,
   adminUserSchema,
@@ -12,68 +12,111 @@ import {
   objectIdParams,
   paginationQuery,
   saleSchema,
-} from "../validation/schemas.js"
-import { assignOrderToShipper, createCategory, createIngredient, createMenu, createProduct, createRecipeAdmin, createSale, deleteCategory, deleteIngredient, deleteMenu, deleteProductAdmin, deleteRecipeAdmin, deleteSale, deleteSpecialAdmin, deleteUser, getAdminAndShippers, getAllIngredientsAdmin, getAllMenus, getAllOrders, getAllRecipesAdmin, getAllSalesAdmin, getCategories, getMenuById, getProductDetailAdmin, getProducts, getRecipeByIdAdmin, getSaleItems, getSpecialDetailAdmin, getSpecials, registerUser, updateCategory, updateIngredient, updateMenu, updateProductAdmin, updateRecipeAdmin, updateSale, updateSpecialAdmin, updateUser } from "../controller/adminController.js"
-import { processShipperCancellation } from "../controller/orderCancellationController.js"
-const router = express.Router()
+} from "../validation/schemas.js";
+import {
+  assignOrderToShipper,
+  createCategory,
+  createIngredient,
+  createMenu,
+  createProduct,
+  createRecipeAdmin,
+  createSale,
+  deleteCategory,
+  deleteIngredient,
+  deleteMenu,
+  deleteProductAdmin,
+  deleteRecipeAdmin,
+  deleteSale,
+  deleteSpecialAdmin,
+  deleteUser,
+  getAdminAndShippers,
+  getAllIngredientsAdmin,
+  getAllMenus,
+  getAllOrders,
+  getAllRecipesAdmin,
+  getAllSalesAdmin,
+  getCategories,
+  getMenuById,
+  getProductDetailAdmin,
+  getProducts,
+  getRecipeByIdAdmin,
+  getSpecialDetailAdmin,
+  getSpecials,
+  registerUser,
+  updateCategory,
+  updateIngredient,
+  updateMenu,
+  updateProductAdmin,
+  updateRecipeAdmin,
+  updateSale,
+  updateSpecialAdmin,
+  updateUser,
+} from "../controller/adminController.js";
+import { processShipperCancellation } from "../controller/orderCancellationController.js";
 
-// Get
-router.get(["/users-get", "/users"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(paginationQuery, "query"), getAdminAndShippers);
-router.get(["/get-all-orders", "/orders"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(paginationQuery, "query"), getAllOrders);
-router.get(["/get-all-products", "/products"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(paginationQuery, "query"), getProducts);
-router.get(["/get-all-category", "/categories"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(paginationQuery, "query"), getCategories);
-router.get(["/get-all-specials", "/specials"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(paginationQuery, "query"), getSpecials);
-router.get(["/get-all-recipes", "/recipes"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(paginationQuery, "query"), getAllRecipesAdmin);
-router.get(["/get-all-ingredients", "/ingredients"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(paginationQuery, "query"), getAllIngredientsAdmin);
-router.get(["/get-all-menus", "/menus"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(paginationQuery, "query"), getAllMenus);
-router.get("/get-all-sales", protectRoute, authorizeRole(["admin", "super_admin"]), validate(paginationQuery, "query"), getSaleItems);
-router.get(["/get-sales", "/sales"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(paginationQuery, "query"), getAllSalesAdmin);
-router.get(["/get-product-detail/:id", "/products/:id"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), getProductDetailAdmin);
-router.get(["/get-special-detail/:id", "/specials/:id"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), getSpecialDetailAdmin);
-router.get(["/get-recipe-detail/:id", "/recipes/:id"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), getRecipeByIdAdmin);
-router.get(["/get-menu-detail/:id", "/menus/:id"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), getMenuById);
+const router = express.Router();
+const idParams = validate(objectIdParams(), "params");
+const adminOnly = authorizeRole(["admin", "super_admin"]);
 
-// Create
-router.post(["/create-user", "/users"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(adminUserSchema), registerUser)
-router.post(["/create-category", "/categories"], protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), validate(categorySchema), createCategory)
-router.post(["/create-product", "/products"], protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), validate(catalogSchema), createProduct)
-router.post(["/create-sale", "/sales"], protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), validate(saleSchema), createSale)
-router.post(["/create-ingredient", "/ingredients"], protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), validate(catalogSchema), createIngredient)
-router.post(["/create-recipe", "/recipes"], protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), validate(catalogSchema), createRecipeAdmin)
-router.post(["/create-menu", "/menus"], protectRoute, authorizeRole(["admin", "super_admin"]), upload.single("image"), validate(catalogSchema), createMenu)
+router.use(protectRoute, adminOnly);
 
-// Update
-router.patch(["/users-update/:id", "/users/:id"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), validate(adminUserUpdateSchema), updateUser);
-router.put(["/category-update/:id", "/categories/:id"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), upload.single("image"), validate(categorySchema.fork(["name"], (schema) => schema.optional())), updateCategory);
-router.put(["/product-update/:id", "/products/:id"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), upload.single("image"), validate(catalogSchema), updateProductAdmin);
-router.put(["/special-update/:id", "/specials/:id"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), upload.single("image"), validate(catalogSchema), updateSpecialAdmin);
-router.put(["/sale-update/:id", "/sales/:id"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), upload.single("image"), validate(saleSchema.fork(["percent", "startDate", "endDate"], (schema) => schema.optional())), updateSale);
-router.put(["/ingredient-update/:id", "/ingredients/:id"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), upload.single("image"), validate(catalogSchema), updateIngredient);
-router.put(["/recipe-update/:id", "/recipes/:id"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), upload.single("image"), validate(catalogSchema), updateRecipeAdmin);
-router.put(["/menu-update/:id", "/menus/:id"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), upload.single("image"), validate(catalogSchema), updateMenu);
+router.get("/users", validate(paginationQuery, "query"), getAdminAndShippers);
+router.post("/users", validate(adminUserSchema), registerUser);
+router.patch("/users/:id", idParams, validate(adminUserUpdateSchema), updateUser);
+router.delete("/users/:id", idParams, deleteUser);
 
-// Delete
-router.delete(["/users-delete/:id", "/users/:id"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), deleteUser);
-router.delete(["/category-delete/:id", "/categories/:id"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), deleteCategory);
-router.delete(["/product-delete/:id", "/products/:id"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), deleteProductAdmin);
-router.delete(["/special-delete/:id", "/specials/:id"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), deleteSpecialAdmin);
-router.delete(["/sale-delete/:id", "/sales/:id"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), deleteSale);
-router.delete(["/ingredient-delete/:id", "/ingredients/:id"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), deleteIngredient);
-router.delete(["/recipe-delete/:id", "/recipes/:id"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), deleteRecipeAdmin);
-router.delete(["/menu-delete/:id", "/menus/:id"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(objectIdParams(), "params"), deleteMenu);
+router.get("/orders", validate(paginationQuery, "query"), getAllOrders);
+router.post("/order-assignments", validate(assignOrderSchema), assignOrderToShipper);
+router.patch("/orders/cancellation-requests", validate(adminCancelSchema), processShipperCancellation);
 
-// Admin role
-router.patch(["/process-cancel", "/orders/cancellation-requests"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(adminCancelSchema), processShipperCancellation);
-router.post(["/assign-order", "/order-assignments"], protectRoute, authorizeRole(["admin", "super_admin"]), validate(assignOrderSchema), assignOrderToShipper)
-router.post(
-  "/approve-order-cancelled",
-  protectRoute,
-  authorizeRole(["admin", "super_admin"]),
-  validate(adminCancelSchema),
-  (req, res) => {
-    req.body.action = "accept";
-    return processShipperCancellation(req, res);
-  },
-)
+router.get("/products", validate(paginationQuery, "query"), getProducts);
+router.get("/products/:id", idParams, getProductDetailAdmin);
+router.post("/products", upload.single("image"), validate(catalogSchema), createProduct);
+router.put("/products/:id", idParams, upload.single("image"), validate(catalogSchema), updateProductAdmin);
+router.delete("/products/:id", idParams, deleteProductAdmin);
 
-export default router
+router.get("/specials", validate(paginationQuery, "query"), getSpecials);
+router.get("/specials/:id", idParams, getSpecialDetailAdmin);
+router.put("/specials/:id", idParams, upload.single("image"), validate(catalogSchema), updateSpecialAdmin);
+router.delete("/specials/:id", idParams, deleteSpecialAdmin);
+
+router.get("/categories", validate(paginationQuery, "query"), getCategories);
+router.post("/categories", upload.single("image"), validate(categorySchema), createCategory);
+router.put(
+  "/categories/:id",
+  idParams,
+  upload.single("image"),
+  validate(categorySchema.fork(["name"], (schema) => schema.optional())),
+  updateCategory,
+);
+router.delete("/categories/:id", idParams, deleteCategory);
+
+router.get("/sales", validate(paginationQuery, "query"), getAllSalesAdmin);
+router.post("/sales", upload.single("image"), validate(saleSchema), createSale);
+router.put(
+  "/sales/:id",
+  idParams,
+  upload.single("image"),
+  validate(saleSchema.fork(["percent", "startDate", "endDate"], (schema) => schema.optional())),
+  updateSale,
+);
+router.delete("/sales/:id", idParams, deleteSale);
+
+router.get("/ingredients", validate(paginationQuery, "query"), getAllIngredientsAdmin);
+router.post("/ingredients", upload.single("image"), validate(catalogSchema), createIngredient);
+router.put("/ingredients/:id", idParams, upload.single("image"), validate(catalogSchema), updateIngredient);
+router.delete("/ingredients/:id", idParams, deleteIngredient);
+
+router.get("/recipes", validate(paginationQuery, "query"), getAllRecipesAdmin);
+router.get("/recipes/:id", idParams, getRecipeByIdAdmin);
+router.post("/recipes", upload.single("image"), validate(catalogSchema), createRecipeAdmin);
+router.put("/recipes/:id", idParams, upload.single("image"), validate(catalogSchema), updateRecipeAdmin);
+router.delete("/recipes/:id", idParams, deleteRecipeAdmin);
+
+router.get("/menus", validate(paginationQuery, "query"), getAllMenus);
+router.get("/menus/:id", idParams, getMenuById);
+router.post("/menus", upload.single("image"), validate(catalogSchema), createMenu);
+router.put("/menus/:id", idParams, upload.single("image"), validate(catalogSchema), updateMenu);
+router.delete("/menus/:id", idParams, deleteMenu);
+
+export default router;

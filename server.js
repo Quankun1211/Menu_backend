@@ -44,6 +44,8 @@ import recipeRoutes from "./routes/menuRoutes/recipeRoutes.js"
 import menuRoutes from "./routes/menuRoutes/menuRoutes.js"
 
 import notificationRoutes from "./routes/notificationRoutes.js"
+import userRecipeRoutes from "./routes/userRecipeRoutes.js"
+import legacyPaymentCallbackRoutes from "./routes/legacyPaymentCallbackRoutes.js"
 import {
   checkoutPreviewV1Routes,
   currentUserV1Routes,
@@ -161,34 +163,9 @@ app.get('/', (req, res) => {
 })
 app.get("/sitemap.xml", dynamicSitemap);
 
-app.use("/api/admin", adminRoutes)
-app.use("/api/shipper", shipperRoutes)
+// The only unversioned compatibility route is an external VNPay callback.
+app.use("/api/order", legacyPaymentCallbackRoutes)
 
-app.use("/api/auth", authRoutes)
-app.use("/api/user", userRoutes)
-app.use("/api/category", categoryRoutes)
-app.use("/api/product", productRoutes)
-app.use("/api/cart", cartRoutes)
-app.use("/api/favourite", favouriteRoutes)
-app.use("/api/address", addressRoutes)
-app.use("/api/coupon", couponRoutes)
-app.use("/api/order", orderRoutes)
-app.use("/api/special", specialRoutes)
-app.use("/api/sale", saleRoutes)
-app.use("/api/config", configRoutes)
-
-app.use("/api/ai", chatbotRoutes)
-
-// Menu
-app.use("/api/menu/category", categoryMenuRoutes)
-app.use("/api/menu/ingredient", ingredientRoutes)
-app.use("/api/menu/recipe", recipeRoutes)
-app.use("/api/menu/my-menu", menuRoutes)
-
-app.use("/api/notification", notificationRoutes)
-
-// Versioned REST contract. Legacy /api/* mounts above remain temporarily
-// available while external consumers migrate to /api/v1.
 app.use("/api/v1/admin", adminRoutes)
 app.use("/api/v1/shippers", shipperRoutes)
 app.use("/api/v1/auth", authRoutes)
@@ -208,6 +185,7 @@ app.use("/api/v1/chatbot", chatbotRoutes)
 app.use("/api/v1/menu-categories", categoryMenuRoutes)
 app.use("/api/v1/ingredients", ingredientRoutes)
 app.use("/api/v1/recipes", recipeRoutes)
+app.use("/api/v1/user-recipes", userRecipeRoutes)
 app.use("/api/v1/menus", menuRoutes)
 app.use("/api/v1/notifications", notificationRoutes)
 app.use("/api/v1/wallets", walletV1Routes)

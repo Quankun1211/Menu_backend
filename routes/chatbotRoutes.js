@@ -4,6 +4,6 @@ import { validate } from "../middleware/validate.js"
 import { chatbotSchema } from "../validation/schemas.js"
 const router = express.Router()
 
-router.post(["/ask", "/messages"], validate(chatbotSchema), askChatbot)
+router.post("/messages", validate(chatbotSchema), askChatbot)
 
 export default router
