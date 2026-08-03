@@ -17,11 +17,13 @@ export const slugOrIdParams = (name = "id") =>
 export const paginationQuery = Joi.object({
   page: Joi.number().integer().min(1).max(100_000).default(1),
   limit: Joi.number().integer().min(1).max(100).default(10),
-  search: Joi.string().trim().max(200),
-  q: Joi.string().trim().max(200),
+  search: Joi.string().trim().max(200).allow(""),
+  q: Joi.string().trim().max(200).allow(""),
   sort: Joi.string().valid("newest", "oldest", "price_asc", "price_desc", "popular", "sold_desc"),
   status: Joi.string().trim().max(50),
   role: Joi.string().valid("user", "shipper", "admin", "super_admin"),
+  availability: Joi.string().valid("online", "all"),
+  orderId: objectId,
   type: Joi.string().trim().max(50),
   region: Joi.string().valid("all", "bac", "trung", "nam"),
   category: objectId,
@@ -77,6 +79,11 @@ export const addressSchema = Joi.object({
   phone: Joi.string().pattern(/^(?:\+84|0)\d{9,10}$/).required(),
   address: Joi.string().trim().min(5).max(500).required(),
   isDefault: Joi.boolean(),
+  province: shortText.allow(""),
+  district: shortText.allow(""),
+  ward: shortText.allow(""),
+  latitude: Joi.number().min(-90).max(90),
+  longitude: Joi.number().min(-180).max(180),
 });
 export const addressUpdateSchema = addressSchema.fork(["name", "phone", "address"], (schema) => schema.optional()).min(1);
 export const productIdSchema = Joi.object({
@@ -123,6 +130,8 @@ export const notificationSchema = Joi.object({
 export const shipperStatusSchema = Joi.object({
   orderId: objectId.required(),
   nextStatus: Joi.string().valid("confirmed", "shipping", "delivered").required(),
+  deliveryCode: Joi.string().pattern(/^\d{6}$/),
+  recipientName: shortText,
 });
 export const shipperCancelSchema = Joi.object({
   orderId: objectId.required(),
@@ -184,6 +193,10 @@ export const adminUserUpdateSchema = adminUserSchema
   .fork(["name", "username", "email", "password", "role"], (schema) => schema.optional())
   .min(1);
 export const assignOrderSchema = Joi.object({ orderId: objectId.required(), shipperId: objectId.required() });
+export const reassignOrderSchema = Joi.object({
+  shipperId: objectId.required(),
+  reason: Joi.string().trim().min(5).max(500).required(),
+});
 export const adminCancelSchema = Joi.object({
   orderId: objectId.required(),
   action: Joi.string().valid("accept", "reject"),

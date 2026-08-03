@@ -5,6 +5,7 @@ import { triggerAIUpdate } from "../utils/trackingUserBehavior.js";
 import { Notification } from "../models/notification/notificationSchema.js"
 import { redisClient } from "../config/redis.js";
 import jwt from "jsonwebtoken";
+import { authErrorResponse } from "../config/errorText.js";
 import { AuthSession } from "../models/authSessionModel.js";
 import { cookieSecurityOptions, hashToken, issueSession, setCsrfToken } from "../utils/generateToken.js";
 import { OAuth2Client } from "google-auth-library";
@@ -419,20 +420,16 @@ export const login = async (req, res) => {
             ]
         })
 
-        if(!user) {
-            return res.status(401).json({error: "Tên đăng nhập/email hoặc mật khẩu không đúng"})
-        }
+        if(!user) return authErrorResponse(res, "ACCOUNT_NOT_FOUND")
 
         const isPasswordCorrect = await bcryptjs.compare(password, user.password || "")
-        if(!isPasswordCorrect) {
-            return res.status(401).json({error: "Tên đăng nhập/email hoặc mật khẩu không đúng"})
-        }
+        if(!isPasswordCorrect) return authErrorResponse(res, "PASSWORD_INCORRECT")
         if (!user.isVerified) {
-          return res.status(403).json({ error: "Tài khoản chưa được xác minh" });
+          return authErrorResponse(res, "ACCOUNT_UNVERIFIED");
         }
         // Older accounts may not have isActive. Only an explicit false means locked.
         if (user.isActive === false) {
-          return res.status(403).json({ error: "Tài khoản đã bị khóa" });
+          return authErrorResponse(res, "ACCOUNT_LOCKED");
         }
         const session = await issueSession(user, res, req)
         user.lastLoginAt = new Date()
@@ -472,6 +469,8 @@ export const logout = async (req, res) => {
             );
           } catch {}
         }
+        // Trạng thái sẵn sàng của shipper là lựa chọn nghiệp vụ, không phụ thuộc
+        // vào socket hay phiên đăng nhập. Chỉ endpoint availability được phép đổi nó.
         const cookieSecurity = cookieSecurityOptions();
         res.clearCookie("jwt", cookieSecurity);
         res.clearCookie("refresh_token", { ...cookieSecurity, path: "/api/auth" });
@@ -498,12 +497,12 @@ export const getCsrfToken = (req, res) => {
 export const refreshAccessToken = async (req, res) => {
   try {
     const refreshToken = req.cookies?.refresh_token || req.body?.token;
-    if (!refreshToken) return res.status(401).json({ error: "Refresh token is required" });
+    if (!refreshToken) return authErrorResponse(res, "SESSION_EXPIRED");
     const decoded = jwt.verify(refreshToken, process.env.JWT_SECRET);
-    if (decoded.tokenType !== "refresh") return res.status(401).json({ error: "Invalid refresh token" });
+    if (decoded.tokenType !== "refresh") return authErrorResponse(res, "SESSION_INVALID");
     const session = await AuthSession.findOne({ tokenHash: hashToken(decoded.jti) });
     if (!session || session.expiresAt <= new Date()) {
-      return res.status(401).json({ error: "Refresh session is unavailable" });
+      return authErrorResponse(res, "SESSION_EXPIRED");
     }
     if (session.revokedAt) {
       await AuthSession.updateMany(
@@ -513,11 +512,11 @@ export const refreshAccessToken = async (req, res) => {
           cleanupAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         },
       );
-      return res.status(401).json({ error: "Refresh token reuse detected" });
+      return authErrorResponse(res, "SESSION_INVALID");
     }
     const user = await User.findById(decoded.userId);
     if (!user || user.isActive === false || !user.isVerified) {
-      return res.status(401).json({ error: "Account is unavailable" });
+      return authErrorResponse(res, "ACCOUNT_UNAVAILABLE");
     }
     const rotated = await issueSession(user, res, req, decoded.familyId);
     session.revokedAt = new Date();
@@ -537,7 +536,7 @@ export const refreshAccessToken = async (req, res) => {
       },
     });
   } catch {
-    return res.status(401).json({ error: "Invalid or expired refresh token" });
+    return authErrorResponse(res, "SESSION_EXPIRED");
   }
 };
 

@@ -12,6 +12,7 @@ import {
   objectIdParams,
   paginationQuery,
   saleSchema,
+  reassignOrderSchema,
 } from "../validation/schemas.js";
 import {
   assignOrderToShipper,
@@ -43,6 +44,7 @@ import {
   getSpecialDetailAdmin,
   getSpecials,
   registerUser,
+  reassignOrderToShipper,
   updateCategory,
   updateIngredient,
   updateMenu,
@@ -52,13 +54,17 @@ import {
   updateSpecialAdmin,
   updateUser,
 } from "../controller/adminController.js";
-import { processShipperCancellation } from "../controller/orderCancellationController.js";
+import { processShipperCancellation, retryOrderRefund } from "../controller/orderCancellationController.js";
+import { getDashboardOverview } from "../controller/adminDashboardController.js";
+import { getTransactionsAdmin } from "../controller/adminTransactionController.js";
 
 const router = express.Router();
 const idParams = validate(objectIdParams(), "params");
 const adminOnly = authorizeRole(["admin", "super_admin"]);
 
 router.use(protectRoute, adminOnly);
+
+router.get("/dashboard", getDashboardOverview);
 
 router.get("/users", validate(paginationQuery, "query"), getAdminAndShippers);
 router.post("/users", validate(adminUserSchema), registerUser);
@@ -67,7 +73,19 @@ router.delete("/users/:id", idParams, deleteUser);
 
 router.get("/orders", validate(paginationQuery, "query"), getAllOrders);
 router.post("/order-assignments", validate(assignOrderSchema), assignOrderToShipper);
+router.put(
+  "/orders/:orderId/assignment",
+  validate(objectIdParams("orderId"), "params"),
+  validate(reassignOrderSchema),
+  reassignOrderToShipper,
+);
 router.patch("/orders/cancellation-requests", validate(adminCancelSchema), processShipperCancellation);
+router.get("/transactions", validate(paginationQuery, "query"), getTransactionsAdmin);
+router.post(
+  "/refunds/:orderId/attempts",
+  validate(objectIdParams("orderId"), "params"),
+  retryOrderRefund,
+);
 
 router.get("/products", validate(paginationQuery, "query"), getProducts);
 router.get("/products/:id", idParams, getProductDetailAdmin);

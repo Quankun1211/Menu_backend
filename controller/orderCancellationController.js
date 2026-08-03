@@ -10,7 +10,7 @@ import { refundOrderLogic } from "../utils/vnpayRefund.js";
 import { emitOrderUpdated } from "../utils/orderRealtime.js";
 import { sendInternalNotification } from "./notificationController.js";
 
-const CANCELABLE_STATUSES = ["pending", "confirmed", "processing"];
+const CANCELABLE_STATUSES = ["pending", "assigned", "confirmed", "processing"];
 
 const restoreInventory = async (order, session) => {
   if (order.inventoryReleasedAt) return;
@@ -159,6 +159,11 @@ export const cancelOrder = async (req, res) => {
       await restoreCoupon(order, originalPaymentStatus, session);
 
       order.status = "cancelled";
+      order.$locals.statusActor = {
+        actorId: req.user._id,
+        actorRole: req.user.role,
+        note: reason,
+      };
       order.paymentStatus = originalPaymentStatus === "paid" ? "refunded" : "cancelled";
       order.cancelReason = reason;
       order.cancelledAt = new Date();
@@ -228,9 +233,14 @@ export const processShipperCancellation = async (req, res) => {
   }
 
   if (action === "reject") {
-    initialOrder.status = "assigned";
+    initialOrder.status = initialOrder.cancelRequest?.previousStatus || "assigned";
     initialOrder.cancelRequest.isAccepted = false;
     initialOrder.cancelRequest.adminNote = adminNote;
+    initialOrder.$locals.statusActor = {
+      actorId: req.user._id,
+      actorRole: req.user.role,
+      note: adminNote || "Từ chối yêu cầu hủy",
+    };
     await initialOrder.save();
     emitOrderUpdated(req.app.get("io"), initialOrder);
     return res.status(200).json({ success: true, status: initialOrder.status });
@@ -312,6 +322,11 @@ export const processShipperCancellation = async (req, res) => {
       await restoreCoupon(order, originalPaymentStatus, session);
 
       order.status = "cancelled";
+      order.$locals.statusActor = {
+        actorId: req.user._id,
+        actorRole: req.user.role,
+        note: adminNote || order.cancelRequest?.reason,
+      };
       order.paymentStatus = originalPaymentStatus === "paid" ? "refunded" : "cancelled";
       order.cancelReason = order.cancelRequest?.reason || "Nhân viên giao hàng yêu cầu hủy";
       order.cancelRequest.isAccepted = true;
@@ -415,4 +430,94 @@ export const recoverGatewayCompletedRefunds = async (io = null) => {
     }
   }
   return orders.length;
+};
+
+export const retryFailedRefunds = async (io = null, specificOrderId = null, actor = "system", ipAddress = "127.0.0.1") => {
+  const filter = {
+    refundStatus: "failed",
+    paymentStatus: "paid",
+    paymentMethod: "vnpay",
+    ...(specificOrderId && { _id: specificOrderId }),
+  };
+  const candidates = await Order.find(filter).limit(specificOrderId ? 1 : 20);
+  const results = [];
+
+  for (const order of candidates) {
+    const transaction = await Transaction.findOne({ orderId: order._id });
+    if (!transaction || transaction.refundRetryCount >= 5) {
+      results.push({ orderId: order._id, success: false, message: "Đã đạt giới hạn thử hoàn tiền" });
+      continue;
+    }
+    if (!specificOrderId && transaction.nextRefundRetryAt && transaction.nextRefundRetryAt > new Date()) continue;
+
+    try {
+      order.refundStatus = "processing";
+      order.refundRequestedAt = new Date();
+      await order.save();
+      const response = await refundOrderLogic({
+        orderId: order._id,
+        paymentRef: order.currentPaymentRef,
+        amount: order.totalPrice,
+        transactionDate:
+          transaction.gatewayDetails?.rawPayDate ||
+          order.paidAt ||
+          order.createdAt,
+        transactionNo: transaction.gatewayDetails?.transactionId,
+        user: actor,
+        ipAddress,
+      });
+      if (response?.vnp_ResponseCode !== "00") {
+        throw new Error(`VNPay từ chối hoàn tiền: ${response?.vnp_ResponseCode || "unknown"}`);
+      }
+      await Promise.all([
+        Order.updateOne({ _id: order._id }, { refundStatus: "gateway_completed" }),
+        Transaction.updateOne(
+          { _id: transaction._id },
+          {
+            $inc: { refundRetryCount: 1 },
+            $unset: { lastRefundError: 1, nextRefundRetryAt: 1 },
+            $set: {
+              "gatewayDetails.refundResponseCode": response.vnp_ResponseCode,
+              "gatewayDetails.refundTransactionNo": response.vnp_TransactionNo,
+            },
+          },
+        ),
+      ]);
+      results.push({ orderId: order._id, success: true });
+    } catch (error) {
+      const retryCount = transaction.refundRetryCount + 1;
+      const delayMinutes = Math.min(2 ** retryCount * 5, 24 * 60);
+      await Promise.all([
+        Order.updateOne({ _id: order._id }, { refundStatus: "failed" }),
+        Transaction.updateOne(
+          { _id: transaction._id },
+          {
+            $inc: { refundRetryCount: 1 },
+            lastRefundError: error.message,
+            nextRefundRetryAt: new Date(Date.now() + delayMinutes * 60 * 1000),
+          },
+        ),
+      ]);
+      results.push({ orderId: order._id, success: false, message: error.message });
+    }
+  }
+
+  if (results.some((item) => item.success)) await recoverGatewayCompletedRefunds(io);
+  return results;
+};
+
+export const retryOrderRefund = async (req, res) => {
+  const results = await retryFailedRefunds(
+    req.app.get("io"),
+    req.params.orderId,
+    req.user.email || req.user.username || "admin",
+    req.ip,
+  );
+  const result = results[0];
+  if (!result) return res.status(404).json({ success: false, message: "Không tìm thấy yêu cầu hoàn tiền lỗi" });
+  return res.status(result.success ? 200 : 502).json({
+    success: result.success,
+    message: result.success ? "Hoàn tiền lại thành công" : result.message,
+    data: result,
+  });
 };

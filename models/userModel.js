@@ -62,6 +62,12 @@ const userSchema = new mongoose.Schema({
         type: Boolean,
         default: false
     },
+    lastKnownLocation: {
+      latitude: Number,
+      longitude: Number,
+      updatedAt: Date,
+    },
+    serviceAreas: [{ type: String, trim: true }],
     viewHistory: [
     {
       categoryId: {

@@ -5,11 +5,13 @@ import { Wallet } from "../models/walletSchema.js";
 import { OrderItem } from "../models/orderItemsModel.js";
 import { LevelReward } from "../models/levelModel.js";
 import { RewardHistory } from "../models/rewardHistoryModel.js";
+import { Transaction } from "../models/transactionModel.js";
 import { emitOrderUpdated } from "../utils/orderRealtime.js";
 import {
   canRequestShipperCancellation,
   canShipperTransitionOrder,
 } from "../domain/orderStatus.js";
+import { verifyDeliveryOtp } from "../utils/deliveryVerification.js";
 
 const attachOrderSummaries = async (orders) => {
     if (!orders.length) return orders;
@@ -27,6 +29,7 @@ const attachOrderSummaries = async (orders) => {
         const names = orderItems.map((item) => item.productName).filter(Boolean);
         return {
             ...order,
+            address: order.deliveryAddress?.address ? order.deliveryAddress : order.address,
             itemCount: orderItems.reduce((sum, item) => sum + item.quantity, 0),
             productSummary: names.length > 2
                 ? `${names.slice(0, 2).join(", ")} +${names.length - 2} món`
@@ -239,10 +242,12 @@ export const updateOrderStatus = async (req, res) => {
   session.startTransaction();
 
   try {
-    const { orderId, nextStatus } = req.body;
+    const { orderId, nextStatus, deliveryCode, recipientName } = req.body;
     const shipperId = req.user._id;
 
-    const order = await Order.findOne({ _id: orderId, shipperId }).session(session);
+    const order = await Order.findOne({ _id: orderId, shipperId })
+      .select("+deliveryVerification.otpHash")
+      .session(session);
 
     if (!order) {
       await session.abortTransaction();
@@ -253,11 +258,38 @@ export const updateOrderStatus = async (req, res) => {
     }
 
     const currentStatus = order.status;
+    if (
+      currentStatus === "assigned" &&
+      order.assignment?.expiresAt &&
+      order.assignment.expiresAt <= new Date()
+    ) {
+      await session.abortTransaction();
+      return res.status(409).json({
+        success: false,
+        code: "ASSIGNMENT_EXPIRED",
+        message: "Thời gian xác nhận đơn đã hết. Đơn sẽ được trả về để phân công lại.",
+      });
+    }
     const isValidTransition = canShipperTransitionOrder(currentStatus, nextStatus);
 
     if (isValidTransition && nextStatus === "shipping") {
       order.shippedAt = new Date();
+    } else if (isValidTransition && nextStatus === "confirmed") {
+      order.assignment.acceptedAt = new Date();
+      order.assignment.expiresAt = undefined;
     } else if (isValidTransition && nextStatus === "delivered") {
+      if (
+        !order.deliveryVerification?.otpExpiresAt ||
+        order.deliveryVerification.otpExpiresAt < new Date() ||
+        !verifyDeliveryOtp(deliveryCode, order.deliveryVerification.otpHash)
+      ) {
+        await session.abortTransaction();
+        return res.status(400).json({
+          success: false,
+          code: "INVALID_DELIVERY_CODE",
+          message: "Mã xác nhận giao hàng không đúng hoặc đã hết hạn.",
+        });
+      }
       if (!order.isSeedRewarded) {
         order.deliveredAt = new Date();
         order.isSeedRewarded = true;
@@ -265,10 +297,18 @@ export const updateOrderStatus = async (req, res) => {
         if (order.paymentMethod === 'cod' && order.paymentStatus !== 'paid') {
           order.paymentStatus = "paid";
           order.paidAt = new Date();
+          await Transaction.updateOne(
+            { orderId: order._id, paymentMethod: "cod" },
+            { status: "completed" },
+            { session },
+          );
         }
 
         await processLevelUpAndRewards(order.userId, order._id, order.totalPrice, session);
       }
+      order.deliveryVerification.verifiedAt = new Date();
+      order.deliveryVerification.recipientName = recipientName || order.deliveryAddress?.name;
+      order.deliveryVerification.otpHash = undefined;
     }
 
     if (!isValidTransition) {
@@ -280,6 +320,11 @@ export const updateOrderStatus = async (req, res) => {
     }
 
     order.status = nextStatus;
+    order.$locals.statusActor = {
+      actorId: shipperId,
+      actorRole: "shipper",
+      note: `Shipper chuyển trạng thái sang ${nextStatus}`,
+    };
     await order.save({ session });
     await session.commitTransaction();
 
@@ -343,11 +388,18 @@ export const requestCancelOrder = async (req, res) => {
             });
         }
 
+        const previousStatus = order.status;
         order.status = "pending_cancel";
         order.cancelRequest = {
             reason: reason.trim(),
             requestedAt: new Date(),
-            isAccepted: false
+            isAccepted: false,
+            previousStatus,
+        };
+        order.$locals.statusActor = {
+            actorId: shipperId,
+            actorRole: "shipper",
+            note: reason.trim(),
         };
 
         await order.save();
@@ -385,6 +437,20 @@ export const updateShipperStatus = async (req, res) => {
             });
         }
 
+        if (!isOnline) {
+            const activeOrder = await Order.exists({
+                shipperId,
+                status: { $in: ["assigned", "confirmed", "processing", "shipping", "pending_cancel"] },
+            });
+            if (activeOrder) {
+                return res.status(409).json({
+                    success: false,
+                    code: "ACTIVE_DELIVERY_EXISTS",
+                    message: "Bạn đang có đơn chưa hoàn thành. Hãy xử lý hoặc yêu cầu điều phối lại trước khi ngoại tuyến.",
+                });
+            }
+        }
+
         const shipper = await User.findOneAndUpdate(
             { _id: shipperId, role: "shipper" },
             { isOnline: isOnline },
@@ -397,6 +463,12 @@ export const updateShipperStatus = async (req, res) => {
                 message: "Không tìm thấy shipper hoặc người dùng không có quyền"
             });
         }
+
+        const io = req.app.get("io");
+        io?.to("admins").emit("shipper_availability_changed", {
+            shipperId: shipper._id.toString(),
+            isOnline: shipper.isOnline,
+        });
 
         res.status(200).json({
             success: true,
@@ -435,6 +507,10 @@ export const updateShipperLocation = async (req, res) => {
       message: "Không tìm thấy đơn đang giao thuộc quyền xử lý của bạn."
     });
   }
+  await User.updateOne(
+    { _id: shipperId, role: "shipper" },
+    { lastKnownLocation: { latitude, longitude, updatedAt: new Date() } },
+  );
 
   req.app.get('io').to(`order:${orderId}`).emit('live_update', {
     latitude: parseFloat(latitude),

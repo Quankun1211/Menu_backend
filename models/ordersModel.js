@@ -41,7 +41,8 @@ const orderSchema = new mongoose.Schema({
         reason: { type: String }, 
         requestedAt: { type: Date },
         adminNote: { type: String },
-        isAccepted: { type: Boolean, default: false }
+        isAccepted: { type: Boolean, default: false },
+        previousStatus: { type: String, enum: ORDER_STATUSES }
     },
     cancelReason: {
         type: String,
@@ -61,6 +62,36 @@ const orderSchema = new mongoose.Schema({
     address: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "Address"
+    },
+    deliveryAddress: {
+        name: { type: String, trim: true },
+        phone: { type: String, trim: true },
+        address: { type: String, trim: true },
+        province: { type: String, trim: true },
+        district: { type: String, trim: true },
+        ward: { type: String, trim: true },
+        latitude: Number,
+        longitude: Number,
+    },
+    statusHistory: [{
+        _id: false,
+        status: { type: String, enum: ORDER_STATUSES, required: true },
+        at: { type: Date, default: Date.now },
+        actorId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+        actorRole: {
+            type: String,
+            enum: ["user", "shipper", "admin", "super_admin", "system"],
+            default: "system",
+        },
+        note: { type: String, trim: true, maxlength: 500 },
+    }],
+    assignment: {
+        assignedAt: Date,
+        expiresAt: Date,
+        acceptedAt: Date,
+        reassignedAt: Date,
+        previousShipperId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+        reassignmentReason: { type: String, trim: true, maxlength: 500 },
     },
     paymentMethod: {
         type: String,
@@ -109,6 +140,13 @@ const orderSchema = new mongoose.Schema({
     deliveredAt: {
         type: Date
     },
+    deliveryVerification: {
+        otpHash: { type: String, select: false },
+        otpExpiresAt: Date,
+        verifiedAt: Date,
+        proofImage: String,
+        recipientName: { type: String, trim: true, maxlength: 255 },
+    },
     isSeedRewarded: {
         type: Boolean,
         default: false
@@ -122,6 +160,7 @@ const orderSchema = new mongoose.Schema({
 orderSchema.index({ userId: 1, status: 1, createdAt: -1 });
 orderSchema.index({ shipperId: 1, status: 1, updatedAt: -1 });
 orderSchema.index({ status: 1, createdAt: -1 });
+orderSchema.index({ status: 1, "assignment.expiresAt": 1 });
 orderSchema.index({
     paymentMethod: 1,
     paymentStatus: 1,
@@ -132,5 +171,19 @@ orderSchema.index(
     { userId: 1, checkoutSessionId: 1 },
     { unique: true, partialFilterExpression: { checkoutSessionId: { $type: "string" } } }
 );
+
+orderSchema.pre("save", function appendStatusHistory() {
+    if (!this.isModified("status")) return;
+    const latest = this.statusHistory?.[this.statusHistory.length - 1];
+    if (latest?.status === this.status) return;
+    const actor = this.$locals?.statusActor || {};
+    this.statusHistory.push({
+        status: this.status,
+        at: new Date(),
+        actorId: actor.actorId,
+        actorRole: actor.actorRole || "system",
+        note: actor.note,
+    });
+});
 
 export const Order = mongoose.model("Order", orderSchema)

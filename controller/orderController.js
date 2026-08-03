@@ -254,6 +254,16 @@ export const createOrder = async (req, res) => {
       totalPrice: finalTotalPrice,
       shippingFee,
       address,
+      deliveryAddress: {
+        name: ownedAddress.name,
+        phone: ownedAddress.phone,
+        address: ownedAddress.address,
+        province: ownedAddress.province,
+        district: ownedAddress.district,
+        ward: ownedAddress.ward,
+        latitude: ownedAddress.latitude,
+        longitude: ownedAddress.longitude,
+      },
       source,
       checkoutSessionId,
       paymentMethod,
@@ -413,6 +423,14 @@ export const releasePendingOrderInventory = async (
             status: "payment_failed",
             cancelReason: reason,
             inventoryReleasedAt: new Date(),
+          },
+          $push: {
+            statusHistory: {
+              status: "payment_failed",
+              at: new Date(),
+              actorRole: "system",
+              note: reason,
+            },
           },
           $unset: { cancelledAt: 1, cancelledBy: 1 },
         },
@@ -750,7 +768,7 @@ export const getMyOrders = async (req, res) => {
         couponCode: order.couponCode,
         couponDiscount: order.couponDiscount,
         createdAt: order.createdAt,
-        address: order.address,
+        address: order.deliveryAddress?.address ? order.deliveryAddress : order.address,
         cancelReason: order.cancelReason,
         cancelledAt: order.cancelledAt,
         cancelledBy: order.cancelledBy,
@@ -797,9 +815,12 @@ export const getOrderDetail = async (req, res) => {
     }
 
     const isOwner = order.userId.toString() === requesterId;
-    const isShipper = requesterRole === 'shipper'; 
+    const isAssignedShipper =
+      requesterRole === "shipper" &&
+      order.shipperId?.toString() === requesterId;
+    const isAdmin = ["admin", "super_admin"].includes(requesterRole);
 
-    if (!isOwner && !isShipper) {
+    if (!isOwner && !isAssignedShipper && !isAdmin) {
       return res.status(403).json({
         message: "Bạn không có quyền xem đơn hàng này"
       });
@@ -823,7 +844,8 @@ export const getOrderDetail = async (req, res) => {
       data: {
         _id: order._id, 
         status: order.status,
-        address: order.address,
+        address: order.deliveryAddress?.address ? order.deliveryAddress : order.address,
+        statusHistory: order.statusHistory,
         items,
         subTotal: order.subTotal,
         couponCode: order.couponCode,

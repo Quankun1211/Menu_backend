@@ -43,9 +43,13 @@ const TransactionSchema = new mongoose.Schema({
   },
   description: String,
   ipAddress: String,
+  refundRetryCount: { type: Number, default: 0, min: 0 },
+  lastRefundError: String,
+  nextRefundRetryAt: Date,
 }, { timestamps: true });
 
 TransactionSchema.index({ 'gatewayDetails.transactionId': 1 });
 TransactionSchema.index({ status: 1 });
+TransactionSchema.index({ status: 1, nextRefundRetryAt: 1 });
 
 export const Transaction = mongoose.model('Transaction', TransactionSchema);

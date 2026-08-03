@@ -97,7 +97,7 @@ export const getMenus = async (req, res) => {
         const pageSize = Number(limit);
         const skip = (currentPage - 1) * pageSize;
         
-        const cacheKey = `menus:list:${categoryId || 'all'}:p:${currentPage}:l:${pageSize}`;
+        const cacheKey = `menus:list:v2:${categoryId || 'all'}:p:${currentPage}:l:${pageSize}`;
 
         const result = await getOrSetCache(cacheKey, async () => {
             let filter = { isDeleted: false };
@@ -149,8 +149,27 @@ export const getMenus = async (req, res) => {
                     });
                 }
 
+                const recipePreviews = (menu.recipes || []).map(recipe => ({
+                    _id: recipe._id,
+                    name: recipe.name,
+                    image: recipe.image,
+                    cookTime: recipe.cookTime,
+                    difficulty: recipe.difficulty,
+                }));
+
                 return {
-                    ...menu,
+                    _id: menu._id,
+                    title: menu.title,
+                    slug: menu.slug,
+                    titleBanner: menu.titleBanner,
+                    description: menu.description,
+                    image: menu.image,
+                    category: menu.category,
+                    meta: menu.meta,
+                    recipes: recipePreviews,
+                    cookTime: menu.cookTime,
+                    createdAt: menu.createdAt,
+                    updatedAt: menu.updatedAt,
                     totalPrice: Math.round(totalPriceAll),
                     totalPriceInDB: Math.round(totalPriceInDB)
                 };

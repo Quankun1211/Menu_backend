@@ -1,5 +1,6 @@
 import { User } from "../models/userModel.js";
 import jwt from "jsonwebtoken"
+import { authErrorResponse } from "../config/errorText.js";
 
 export const protectRoute = async (req, res, next) => {
   try {
@@ -10,18 +11,18 @@ export const protectRoute = async (req, res, next) => {
         : req.cookies?.jwt;
 
     if (!token) {
-      return res.status(401).json({ error: "Bạn chưa đăng nhập" });
+      return authErrorResponse(res, "LOGIN_REQUIRED");
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     if (decoded.tokenType !== "access") {
-      return res.status(401).json({ error: "Token không đúng mục đích sử dụng" });
+      return authErrorResponse(res, "SESSION_INVALID");
     }
 
     const user = await User.findById(decoded.userId).select("-password");
 
     if (!user) {
-      return res.status(404).json({ error: "User không tồn tại" });
+      return authErrorResponse(res, "ACCOUNT_NOT_FOUND");
     }
 
     req.user = user;
@@ -30,21 +31,16 @@ export const protectRoute = async (req, res, next) => {
     console.error("Token error:", err.name, err.message);
 
     if (err.name === "TokenExpiredError") {
-      return res.status(401).json({ error: "Token đã hết hạn" });
+      return authErrorResponse(res, "SESSION_EXPIRED");
     }
 
-    return res.status(401).json({
-      error: "Token không hợp lệ hoặc đã bị thay đổi",
-    });
+    return authErrorResponse(res, "SESSION_INVALID");
   }
 };
 export const authorizeRole = (allowedRoles) => {
   return (req, res, next) => {
     if (!req.user || !allowedRoles.includes(req.user.role)) {
-      return res.status(403).json({ 
-        success: false, 
-        message: "Bạn không có quyền thực hiện hành động này" 
-      });
+      return authErrorResponse(res, "PERMISSION_DENIED");
     }
     next();
   };

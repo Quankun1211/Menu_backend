@@ -23,6 +23,11 @@ const addressSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    province: String,
+    district: String,
+    ward: String,
+    latitude: Number,
+    longitude: Number,
 
     isDefault: {
       type: Boolean,

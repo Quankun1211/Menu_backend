@@ -14,13 +14,14 @@ import { Order } from "./models/ordersModel.js";
 import { rateLimit, securityHeaders } from "./middleware/security.js";
 import { csrfProtection } from "./middleware/csrf.js";
 import { expirePendingPayments } from "./controller/orderController.js";
-import { recoverGatewayCompletedRefunds } from "./controller/orderCancellationController.js";
+import { recoverGatewayCompletedRefunds, retryFailedRefunds } from "./controller/orderCancellationController.js";
 import { errorHandler, notFoundHandler, requestLogger } from "./middleware/errorHandler.js";
 import { validateRequestEnvelope } from "./middleware/requestEnvelope.js";
 import { dynamicSitemap } from "./controller/sitemapController.js";
 
 import adminRoutes from "./routes/adminRoutes.js"
 import shipperRoutes from "./routes/shipperRoutes.js"
+import { startAssignmentRecovery } from "./services/assignmentRecovery.js";
 
 import authRoutes from "./routes/authRoutes.js"
 import categoryRoutes from "./routes/categoryRoutes.js"
@@ -36,6 +37,7 @@ import saleRoutes from "./routes/saleRoutes.js"
 import configRoutes from "./routes/configRoutes.js"
 
 import chatbotRoutes from "./routes/chatbotRoutes.js"
+import supportChatRoutes from "./routes/supportChatRoutes.js"
 
 // Menu
 import categoryMenuRoutes from "./routes/menuRoutes/categoryMenuRoutes.js"
@@ -182,6 +184,7 @@ app.use("/api/v1/specials", specialRoutes)
 app.use("/api/v1/sales", saleRoutes)
 app.use("/api/v1/settings", configRoutes)
 app.use("/api/v1/chatbot", chatbotRoutes)
+app.use("/api/v1/support-chats", supportChatRoutes)
 app.use("/api/v1/menu-categories", categoryMenuRoutes)
 app.use("/api/v1/ingredients", ingredientRoutes)
 app.use("/api/v1/recipes", recipeRoutes)
@@ -210,6 +213,7 @@ app.set('io', io);
 const startServer = async () => {
     try {
         await connect(); 
+        startAssignmentRecovery(io);
 
         await connectRedis(); 
 
@@ -234,6 +238,7 @@ const startServer = async () => {
               if (processed < 100) break;
             }
             await recoverGatewayCompletedRefunds(io);
+            await retryFailedRefunds(io);
           } catch (error) {
             console.error("Payment expiry job failed", error.message);
           } finally {

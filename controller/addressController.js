@@ -1,10 +1,11 @@
 import { User } from "../models/userModel.js";
 import { Address } from "../models/addressModel.js";
+import { Order } from "../models/ordersModel.js";
 
 export const addAddress = async (req, res) => {
     try {
       const userId = req.user.id;
-      const { name, phone, address, isDefault } = req.body;
+      const { name, phone, address, isDefault, province, district, ward, latitude, longitude } = req.body;
   
       if (!name || !phone || !address) {
         return res.status(400).json({
@@ -33,6 +34,11 @@ export const addAddress = async (req, res) => {
         name,
         phone,
         address,
+        province,
+        district,
+        ward,
+        latitude,
+        longitude,
         isDefault: finalIsDefault,
       });
   
@@ -46,7 +52,6 @@ export const addAddress = async (req, res) => {
       return res.status(500).json({ code: 500 });
     }
   };
-
 export const getAddresses = async (req, res) => {
     try {
       const userId = req.user.id;
@@ -95,7 +100,7 @@ export const updateAddress = async (req, res) => {
   try {
     const userId = req.user.id;
     const { addressId } = req.params;
-    const { name, phone, address, isDefault } = req.body;
+    const { name, phone, address, isDefault, province, district, ward, latitude, longitude } = req.body;
 
     if (isDefault === true) {
       await Address.updateMany(
@@ -110,6 +115,11 @@ export const updateAddress = async (req, res) => {
         name,
         phone,
         address,
+        province,
+        district,
+        ward,
+        latitude,
+        longitude,
         ...(typeof isDefault === "boolean" && { isDefault }),
       },
       { new: true }
@@ -178,6 +188,21 @@ export const setDefaultAddress = async (req, res) => {
       if (!address) {
         return res.status(404).json({ code: 404 });
       }
+      const orderWithoutSnapshot = await Order.exists({
+        userId,
+        address: addressId,
+        $or: [
+          { "deliveryAddress.address": { $exists: false } },
+          { "deliveryAddress.address": null },
+          { "deliveryAddress.address": "" },
+        ],
+      });
+      if (orderWithoutSnapshot) {
+        return res.status(409).json({
+          code: 409,
+          message: "Địa chỉ đang được lưu trong đơn hàng cũ. Vui lòng chạy migration snapshot trước khi xóa.",
+        });
+      }
   
       const wasDefault = address.isDefault;
   
@@ -202,4 +227,3 @@ export const setDefaultAddress = async (req, res) => {
       return res.status(500).json({ code: 500 });
     }
   };
-  

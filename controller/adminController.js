@@ -18,6 +18,8 @@ import fs from 'fs';
 
 import { clearCache } from "../utils/redis.utils.js";
 import { emitOrderUpdated } from "../utils/orderRealtime.js";
+import { createDeliveryOtp } from "../utils/deliveryVerification.js";
+import { sendInternalNotification } from "./notificationController.js";
 
 const clearCategoryCaches = (type) => {
   const patternsByType = {
@@ -27,6 +29,24 @@ const clearCategoryCaches = (type) => {
   };
 
   return clearCache(patternsByType[type] || []);
+};
+
+const distanceInKm = (left, right) => {
+  if (
+    !Number.isFinite(left?.latitude) ||
+    !Number.isFinite(left?.longitude) ||
+    !Number.isFinite(right?.latitude) ||
+    !Number.isFinite(right?.longitude)
+  ) return null;
+  const radians = (value) => value * Math.PI / 180;
+  const latitudeDelta = radians(right.latitude - left.latitude);
+  const longitudeDelta = radians(right.longitude - left.longitude);
+  const value =
+    Math.sin(latitudeDelta / 2) ** 2 +
+    Math.cos(radians(left.latitude)) *
+      Math.cos(radians(right.latitude)) *
+      Math.sin(longitudeDelta / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
 };
 
 export const registerUser = async (req, res) => {
@@ -160,10 +180,24 @@ export const getAllOrders = async (req, res) => {
             .skip(skip)
             .limit(limit);
 
+        const orderItems = await OrderItem.find({
+            orderId: { $in: orders.map((order) => order._id) },
+        }).lean();
+        const itemsByOrder = orderItems.reduce((grouped, item) => {
+            const key = item.orderId.toString();
+            if (!grouped[key]) grouped[key] = [];
+            grouped[key].push(item);
+            return grouped;
+        }, {});
+
         const ordersData = orders.map(order => {
             const orderObj = order.toObject();
             return {
                 ...orderObj,
+                items: itemsByOrder[order._id.toString()] || [],
+                address: orderObj.deliveryAddress?.address
+                    ? orderObj.deliveryAddress
+                    : orderObj.address,
                 shipperInfo: orderObj.shipperId ? {
                     _id: orderObj.shipperId._id,
                     name: orderObj.shipperId.name,
@@ -194,12 +228,16 @@ export const getAdminAndShippers = async (req, res) => {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
         const skip = (page - 1) * limit;
-        const { role, search } = req.query;
+        const { role, search, availability, orderId } = req.query;
 
         let query = { role: { $in: ["admin", "shipper"] }, isActive: true };
 
         if (role && role !== "all") {
             query.role = role;
+        }
+
+        if (role === "shipper" && availability === "online") {
+            query.isOnline = true;
         }
 
         if (search) {
@@ -215,11 +253,47 @@ export const getAdminAndShippers = async (req, res) => {
             .limit(limit)
             .sort({ createdAt: -1 });
 
+        let assignmentLocation = null;
+        if (role === "shipper" && orderId) {
+            const order = await Order.findById(orderId).select("deliveryAddress").lean();
+            assignmentLocation = order?.deliveryAddress;
+        }
+        const activeCountMap = new Map();
+        const maxActiveOrders = Math.max(Number(process.env.SHIPPER_MAX_ACTIVE_ORDERS) || 5, 1);
+        if (role === "shipper") {
+            const counts = await Order.aggregate([
+                {
+                    $match: {
+                        shipperId: { $in: users.map((user) => user._id) },
+                        status: { $in: ["assigned", "confirmed", "processing", "shipping", "pending_cancel"] },
+                    },
+                },
+                { $group: { _id: "$shipperId", count: { $sum: 1 } } },
+            ]);
+            counts.forEach((item) => activeCountMap.set(item._id.toString(), item.count));
+        }
+        let userData = users
+          .map((user) => {
+            const value = user.toObject();
+            const distance = distanceInKm(assignmentLocation, value.lastKnownLocation);
+            const activeOrderCount = activeCountMap.get(user._id.toString()) || 0;
+            return {
+                ...value,
+                distanceKm: distance === null ? null : Number(distance.toFixed(1)),
+                activeOrderCount,
+                maxActiveOrders,
+            };
+          })
+          .sort((left, right) => (left.distanceKm ?? Number.MAX_VALUE) - (right.distanceKm ?? Number.MAX_VALUE));
+        if (role === "shipper" && availability === "online") {
+            userData = userData.filter((user) => user.activeOrderCount < maxActiveOrders);
+        }
+
         const total = await User.countDocuments(query);
 
         res.status(200).json({
             success: true,
-            data: users,
+            data: userData,
             meta: {
                 total,
                 page,
@@ -268,12 +342,32 @@ export const deleteUser = async (req, res) => {
 export const assignOrderToShipper = async (req, res) => {
     try {
         const { orderId, shipperId } = req.body;
+        const maxActiveOrders = Math.max(Number(process.env.SHIPPER_MAX_ACTIVE_ORDERS) || 5, 1);
+        const assignmentTimeoutMinutes = Math.max(Number(process.env.SHIPPER_ASSIGNMENT_TIMEOUT_MINUTES) || 10, 1);
 
-        const shipper = await User.findOne({ _id: shipperId, role: "shipper", isActive: true });
+        const shipper = await User.findOne({
+            _id: shipperId,
+            role: "shipper",
+            isActive: true,
+            isOnline: true
+        });
         if (!shipper) {
-            return res.status(404).json({
+            return res.status(409).json({
                 success: false,
-                message: "Không tìm thấy shipper hoặc người dùng không có quyền giao hàng."
+                code: "SHIPPER_UNAVAILABLE",
+                message: "Shipper đang ngoại tuyến hoặc không còn sẵn sàng nhận đơn."
+            });
+        }
+
+        const activeOrders = await Order.countDocuments({
+            shipperId,
+            status: { $in: ["assigned", "confirmed", "processing", "shipping", "pending_cancel"] },
+        });
+        if (activeOrders >= maxActiveOrders) {
+            return res.status(409).json({
+                success: false,
+                code: "SHIPPER_CAPACITY_REACHED",
+                message: `Shipper đã đạt giới hạn ${maxActiveOrders} đơn đang xử lý.`,
             });
         }
 
@@ -291,11 +385,41 @@ export const assignOrderToShipper = async (req, res) => {
                 message: `Không thể phân công đơn hàng đang ở trạng thái: ${order.status}`
             });
         }
+        if (order.paymentMethod !== "cod" && order.paymentStatus !== "paid") {
+            return res.status(409).json({
+                success: false,
+                code: "PAYMENT_NOT_CONFIRMED",
+                message: "Đơn thanh toán online chưa được xác nhận nên chưa thể phân công giao hàng.",
+            });
+        }
 
         order.shipperId = shipperId;
         order.status = "assigned";
+        const deliveryOtp = createDeliveryOtp();
+        order.deliveryVerification = {
+            otpHash: deliveryOtp.otpHash,
+            otpExpiresAt: deliveryOtp.otpExpiresAt,
+        };
+        order.assignment = {
+            ...order.assignment?.toObject?.(),
+            assignedAt: new Date(),
+            expiresAt: new Date(Date.now() + assignmentTimeoutMinutes * 60 * 1000),
+        };
+        order.$locals.statusActor = {
+            actorId: req.user._id,
+            actorRole: req.user.role,
+            note: `Phân công cho shipper ${shipper.name}`,
+        };
         
         await order.save();
+        await sendInternalNotification(
+            order.userId,
+            "Mã xác nhận giao hàng",
+            `Mã nhận hàng của đơn #${String(order._id).slice(-6).toUpperCase()} là ${deliveryOtp.code}. Chỉ cung cấp mã sau khi đã nhận đủ hàng.`,
+            { orderId: order._id, type: "delivery_otp" },
+            null,
+            req.app.get("io"),
+        );
 
        const io = req.app.get('io');
         if (io) {
@@ -309,6 +433,7 @@ export const assignOrderToShipper = async (req, res) => {
         } else {
             console.log("[DEBUG] IO instance not found");
         }
+        order.deliveryVerification.otpHash = undefined;
 
         res.status(200).json({
             success: true,
@@ -322,6 +447,93 @@ export const assignOrderToShipper = async (req, res) => {
             message: "Lỗi hệ thống khi phân công đơn hàng",
             error: error.message
         });
+    }
+};
+
+export const reassignOrderToShipper = async (req, res) => {
+    try {
+        const { orderId } = req.params;
+        const { shipperId, reason } = req.body;
+        const maxActiveOrders = Math.max(Number(process.env.SHIPPER_MAX_ACTIVE_ORDERS) || 5, 1);
+        const assignmentTimeoutMinutes = Math.max(Number(process.env.SHIPPER_ASSIGNMENT_TIMEOUT_MINUTES) || 10, 1);
+
+        const [order, shipper] = await Promise.all([
+            Order.findById(orderId),
+            User.findOne({ _id: shipperId, role: "shipper", isActive: true, isOnline: true }),
+        ]);
+        if (!order) return res.status(404).json({ success: false, message: "Không tìm thấy đơn hàng" });
+        if (!shipper) {
+            return res.status(409).json({
+                success: false,
+                code: "SHIPPER_UNAVAILABLE",
+                message: "Shipper mới đang ngoại tuyến hoặc không sẵn sàng.",
+            });
+        }
+        if (!["assigned", "confirmed", "pending_cancel"].includes(order.status)) {
+            return res.status(409).json({
+                success: false,
+                message: "Chỉ có thể đổi shipper trước khi đơn bắt đầu giao.",
+            });
+        }
+        if (order.shipperId?.equals(shipper._id)) {
+            return res.status(400).json({ success: false, message: "Đơn hàng đã thuộc shipper này." });
+        }
+        const activeOrders = await Order.countDocuments({
+            shipperId,
+            status: { $in: ["assigned", "confirmed", "processing", "shipping", "pending_cancel"] },
+        });
+        if (activeOrders >= maxActiveOrders) {
+            return res.status(409).json({
+                success: false,
+                code: "SHIPPER_CAPACITY_REACHED",
+                message: "Shipper mới đã đạt giới hạn đơn đang xử lý.",
+            });
+        }
+
+        const previousShipperId = order.shipperId;
+        order.shipperId = shipper._id;
+        order.status = "assigned";
+        const deliveryOtp = createDeliveryOtp();
+        order.deliveryVerification = {
+            otpHash: deliveryOtp.otpHash,
+            otpExpiresAt: deliveryOtp.otpExpiresAt,
+        };
+        order.cancelRequest = undefined;
+        order.assignment = {
+            assignedAt: new Date(),
+            expiresAt: new Date(Date.now() + assignmentTimeoutMinutes * 60 * 1000),
+            reassignedAt: new Date(),
+            previousShipperId,
+            reassignmentReason: reason,
+        };
+        order.$locals.statusActor = {
+            actorId: req.user._id,
+            actorRole: req.user.role,
+            note: `Đổi shipper: ${reason}`,
+        };
+        await order.save();
+        await sendInternalNotification(
+            order.userId,
+            "Mã xác nhận giao hàng mới",
+            `Mã nhận hàng mới của đơn #${String(order._id).slice(-6).toUpperCase()} là ${deliveryOtp.code}.`,
+            { orderId: order._id, type: "delivery_otp" },
+            null,
+            req.app.get("io"),
+        );
+
+        const io = req.app.get("io");
+        if (previousShipperId) {
+            io?.to(previousShipperId.toString()).emit("order_unassigned", { orderId: order._id });
+        }
+        io?.to(shipper._id.toString()).emit("new_order_assigned", {
+            orderId: order._id,
+            message: "Bạn có đơn hàng mới được phân công",
+        });
+        emitOrderUpdated(io, order, { reassigned: true });
+        order.deliveryVerification.otpHash = undefined;
+        return res.status(200).json({ success: true, message: "Đổi shipper thành công", data: order });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
     }
 };
 
