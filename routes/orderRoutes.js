@@ -1,5 +1,5 @@
 import express from "express";
-import { authorizeRole, protectRoute } from "../middleware/protectRoute.js";
+import { protectRoute } from "../middleware/protectRoute.js";
 import { trackBehavior } from "../utils/trackingUserBehavior.js";
 import { createOrder, getMyOrders, getOrderDetail, vnpayReturn } from "../controller/orderController.js";
 import { cancelOrder } from "../controller/orderCancellationController.js";
@@ -10,7 +10,6 @@ import {
   resumeVnpayPayment,
   vnpayIPN,
 } from "../controller/vnpayCallbackController.js";
-import { markOrderAsDelivered } from "../controller/walletController.js";
 import { validate } from "../middleware/validate.js";
 import { cancelOrderSchema, objectIdParams, orderSchema, paginationQuery } from "../validation/schemas.js";
 import { distributedRateLimit } from "../middleware/security.js";
@@ -63,12 +62,4 @@ router.patch(
   trackBehavior("cancel", "Order"),
   cancelOrder,
 );
-router.patch(
-  "/:orderId/delivery",
-  protectRoute,
-  authorizeRole(["shipper", "admin", "super_admin"]),
-  validate(objectIdParams("orderId"), "params"),
-  markOrderAsDelivered,
-);
-
 export default router;

@@ -1,11 +1,9 @@
 import { Order } from "../models/ordersModel.js";
 import { User } from "../models/userModel.js"
 import mongoose from 'mongoose';
-import { Wallet } from "../models/walletSchema.js";
 import { OrderItem } from "../models/orderItemsModel.js";
-import { LevelReward } from "../models/levelModel.js";
-import { RewardHistory } from "../models/rewardHistoryModel.js";
 import { Transaction } from "../models/transactionModel.js";
+import { processCustomerOrderReward } from "../services/customerRewardService.js";
 import { emitOrderUpdated } from "../utils/orderRealtime.js";
 import {
   canRequestShipperCancellation,
@@ -178,65 +176,6 @@ export const getAllShipperOrders = async (req, res) => {
     }
 };
 
-export const processLevelUpAndRewards = async (userId, orderId, totalPrice, session) => {
-    const wallet = await Wallet.findOne({ userId }).session(session);
-    if (!wallet) return;
-
-    let rewardRate = 0;
-    if (totalPrice < 500000) {
-        rewardRate = 0.01; 
-    } else if (totalPrice < 2000000) {
-        rewardRate = 0.02;
-    } else {
-        rewardRate = 0.03;
-    }
-
-    const earnedSeeds = Math.floor(totalPrice * rewardRate);
-    if (earnedSeeds <= 0) return;
-
-    wallet.goldSeeds += earnedSeeds;
-    wallet.totalSeedsAccumulated += earnedSeeds;
-
-    const calculatedLevel = Math.floor(Math.sqrt(wallet.totalSeedsAccumulated / 5000)) + 1;
-    const newLevel = Math.min(calculatedLevel, 50);
-
-    if (newLevel > wallet.level) {
-        const oldLevel = wallet.level;
-        
-        for (let currentLv = oldLevel + 1; currentLv <= newLevel; currentLv++) {
-            const isMilestone = [10, 20, 30, 40, 50].includes(currentLv);
-            
-            let reward = await LevelReward.findOne({ 
-                rewardType: isMilestone ? 'milestone' : 'every_level', 
-                ...(isMilestone && { milestoneLevel: currentLv })
-            }).session(session);
-
-            if (reward) {
-                await RewardHistory.create([{
-                    userId,
-                    levelReached: currentLv,
-                    rewardId: reward._id
-                }], { session });
-            }
-        }
-
-        wallet.level = newLevel;
-        wallet.recentActivities.push({
-            type: 'levelup',
-            seeds: earnedSeeds,
-            description: `Chúc mừng! Bạn đã thăng cấp lên Level ${newLevel}.`
-        });
-    } else {
-        wallet.recentActivities.push({
-            type: 'reward',
-            seeds: earnedSeeds,
-            orderId: orderId,
-            description: `Tích lũy ${earnedSeeds} hạt (${(rewardRate * 100)}%) từ đơn hàng #${orderId.toString().slice(-6)}`
-        });
-    }
-
-    await wallet.save({ session });
-};
 export const updateOrderStatus = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -304,7 +243,12 @@ export const updateOrderStatus = async (req, res) => {
           );
         }
 
-        await processLevelUpAndRewards(order.userId, order._id, order.totalPrice, session);
+        await processCustomerOrderReward({
+          userId: order.userId,
+          orderId: order._id,
+          totalPrice: order.totalPrice,
+          session,
+        });
       }
       order.deliveryVerification.verifiedAt = new Date();
       order.deliveryVerification.recipientName = recipientName || order.deliveryAddress?.name;
