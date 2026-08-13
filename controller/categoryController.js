@@ -46,16 +46,19 @@ export const createCategories = async (req, res) => {
 export const getCategories = async (req, res) => {
     try {
         const limit = Number(req.query.limit);
-        
-        const cacheKey = `categories:product:limit:${Number.isInteger(limit) ? limit : 'all'}`;
+
+        const cacheKey = `categories:product:limit:${
+            Number.isInteger(limit) ? limit : "all"
+        }`;
 
         const categories = await getOrSetCache(cacheKey, async () => {
-            return await Category.find()
+            return await Category.find({
+                isDeleted: { $ne: true }
+            })
                 .sort({ createdAt: -1 })
                 .limit(Number.isInteger(limit) ? limit : 0)
-                .lean(); 
+                .lean();
         });
-
 
         return res.status(200).json({
             code: 200,
@@ -63,11 +66,9 @@ export const getCategories = async (req, res) => {
         });
     } catch (error) {
         console.error("Get categories error:", error.message);
-        return res.status(500).json({ error: "Internal server" });
+
+        return res.status(500).json({
+            error: "Lỗi máy chủ nội bộ"
+        });
     }
 };
-/*
-696af02fac884f3578d9ac97
-696af047ac884f3578d9ac9a
-696af05dac884f3578d9aca1
-*/

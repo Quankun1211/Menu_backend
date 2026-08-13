@@ -53,11 +53,22 @@ export const registerUser = async (req, res) => {
   try {
     const { name, username, email, password, phone, role } = req.body;
 
-    const validRoles = ["admin", "shipper", "super_admin"];
+    const actorRole = req.user.role;
+    const validRoles = actorRole === "super_admin"
+      ? ["admin", "shipper", "super_admin"]
+      : ["shipper"];
+
     if (!validRoles.includes(role)) {
-      return res.status(400).json({
+      return res.status(403).json({
         success: false,
-        message: "Vai trò không hợp lệ"
+        message: "Bạn không có quyền tạo tài khoản với vai trò này"
+      });
+    }
+
+    if (role === "super_admin" && actorRole !== "super_admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Chỉ Super Admin mới có thể tạo Super Admin"
       });
     }
 
@@ -116,10 +127,30 @@ export const updateUser = async (req, res) => {
     try {
         const { id } = req.params;
         const { name, username, email, password, role } = req.body;
+        const actorRole = req.user.role;
 
         const user = await User.findById(id);
         if (!user) {
             return res.status(404).json({ success: false, message: "Người dùng không tồn tại" });
+        }
+
+        if (actorRole === "admin" && user.role !== "shipper") {
+            return res.status(403).json({ success: false, message: "Admin chỉ được chỉnh sửa tài khoản Shipper" });
+        }
+
+        if (actorRole === "admin" && role && role !== "shipper") {
+            return res.status(403).json({ success: false, message: "Admin không được thay đổi vai trò này" });
+        }
+
+        if (actorRole === "admin" && role === "shipper") {
+            // only allow shipper updates
+        }
+
+        if (actorRole === "super_admin" && role === "super_admin" && user.role !== "super_admin") {
+          const existingSuperAdmin = await User.findOne({ role: "super_admin" });
+          if (existingSuperAdmin && existingSuperAdmin._id.toString() !== user._id.toString()) {
+            return res.status(400).json({ success: false, message: "Super admin đã tồn tại" });
+          }
         }
 
         if (username && username !== user.username) {
@@ -230,10 +261,19 @@ export const getAdminAndShippers = async (req, res) => {
         const skip = (page - 1) * limit;
         const { role, search, availability, orderId } = req.query;
 
-        let query = { role: { $in: ["admin", "shipper"] }, isActive: true };
+        let query;
+        if (req.user.role === "admin") {
+            query = { role: "shipper"};
+        } else {
+            query = { role: { $in: ["admin", "shipper"] }};
+        }
 
         if (role && role !== "all") {
-            query.role = role;
+            if (req.user.role === "super_admin") {
+                query.role = role;
+            } else if (role === "shipper") {
+                query.role = "shipper";
+            }
         }
 
         if (role === "shipper" && availability === "online") {
@@ -312,6 +352,15 @@ export const deleteUser = async (req, res) => {
     try {
         const { id } = req.params;
 
+        const user = await User.findById(id);
+        if (!user) {
+            return res.status(404).json({ success: false, message: "User không tồn tại" });
+        }
+
+        if (req.user.role === "admin" && user.role !== "shipper") {
+            return res.status(403).json({ success: false, message: "Admin chỉ được vô hiệu hóa tài khoản Shipper" });
+        }
+
         const activeOrders = await Order.exists({
             shipperId: id,
             status: { $nin: ['delivered', 'cancelled', 'returned'] }
@@ -324,21 +373,64 @@ export const deleteUser = async (req, res) => {
             });
         }
 
-        const user = await User.findByIdAndUpdate(
+        const updatedUser = await User.findByIdAndUpdate(
             id, 
             { isActive: false }, 
             { new: true }
         );
-        
-        if (!user) {
-            return res.status(404).json({ success: false, message: "User không tồn tại" });
-        }
         
         res.status(200).json({ success: true, message: "Đã vô hiệu hóa tài khoản thành công" });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
 };
+
+export const activateUser = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const user = await User.findById(id);
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "User không tồn tại"
+            });
+        }
+
+        if (req.user.role === "admin" && user.role !== "shipper") {
+            return res.status(403).json({
+                success: false,
+                message: "Admin chỉ được kích hoạt tài khoản Shipper"
+            });
+        }
+
+        if (user.isActive) {
+            return res.status(400).json({
+                success: false,
+                message: "Tài khoản đang hoạt động"
+            });
+        }
+
+        const updatedUser = await User.findByIdAndUpdate(
+            id,
+            { isActive: true },
+            { new: true }
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: "Đã kích hoạt tài khoản thành công",
+            data: updatedUser
+        });
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+};
+
 export const assignOrderToShipper = async (req, res) => {
     try {
         const { orderId, shipperId } = req.body;
@@ -644,7 +736,7 @@ export const getProducts = async (req, res) => {
     const skip = (page - 1) * limit;
     const { search } = req.query
 
-    let filter = { isSpecialty: false, isActive: true };
+    let filter = { isSpecialty: false };
 
     if (status === 'in_stock') {
       filter.stock = { $gt: 0 };
@@ -687,7 +779,7 @@ export const getSpecials = async (req, res) => {
     const status = req.query.status;
     const skip = (page - 1) * limit;
 
-    let filter = { isActive: true };
+    let filter = {  };
 
     if (status === 'in_stock') {
       filter.stock = { $gt: 0 };
@@ -740,7 +832,7 @@ export const getCategories = async (req, res) => {
     }
 
     const total = await Model.countDocuments();
-    const data = await Model.find({ isDeleted: false }) 
+    const data = await Model.find() 
       .skip(skip)
       .limit(limit);
 
@@ -889,39 +981,139 @@ export const updateCategory = async (req, res) => {
 };
 
 export const deleteCategory = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { type } = req.query;
+    try {
+        const { id } = req.params;
+        const { type } = req.query;
 
-    let Model;
-    switch (type) {
-      case 'product': Model = Category; break;
-      case 'menu': Model = CategoryMenu; break;
-      case 'recipe': Model = CategoryRecipe; break;
+        let Model;
+
+        switch (type) {
+            case "product":
+                Model = Category;
+                break;
+            case "menu":
+                Model = CategoryMenu;
+                break;
+            case "recipe":
+                Model = CategoryRecipe;
+                break;
+            default:
+                return res.status(400).json({
+                    success: false,
+                    message: "Loại danh mục không hợp lệ"
+                });
+        }
+
+        const category = await Model.findById(id);
+
+        if (!category || category.isDeleted) {
+            return res.status(404).json({
+                success: false,
+                message: "Không tìm thấy danh mục hoặc danh mục đã bị vô hiệu hóa"
+            });
+        }
+
+        const updatedCategory = await Model.findByIdAndUpdate(
+            id,
+            {
+                $set: {
+                    isDeleted: true,
+                    deletedAt: new Date()
+                }
+            },
+            { new: true }
+        );
+
+        const deletedCount = await clearCategoryCaches(type);
+
+        console.log(
+            `Redis: Đã xóa ${deletedCount} cache cho danh mục loại ${type}`
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: "Đã chuyển danh mục vào trạng thái vô hiệu hóa",
+            data: updatedCategory
+        });
+    } catch (error) {
+        console.error("Delete Category Error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Lỗi server khi vô hiệu hóa danh mục"
+        });
     }
+};
 
-    const category = await Model.findById(id);
-    if (!category || category.isDeleted) {
-      return res.status(404).json({ message: "Category not found or already deleted" });
+export const restoreCategory = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { type } = req.query;
+        let Model;
+
+        switch (type) {
+            case "product":
+                Model = Category;
+                break;
+            case "menu":
+                Model = CategoryMenu;
+                break;
+            case "recipe":
+                Model = CategoryRecipe;
+                break;
+            default:
+                return res.status(400).json({
+                    success: false,
+                    message: "Loại danh mục không hợp lệ"
+                });
+        }
+
+        const category = await Model.findById(id);
+
+        if (!category) {
+            return res.status(404).json({
+                success: false,
+                message: "Không tìm thấy danh mục"
+            });
+        }
+
+        if (!category.isDeleted) {
+            return res.status(400).json({
+                success: false,
+                message: "Danh mục đang ở trạng thái hoạt động"
+            });
+        }
+
+        const restoredCategory = await Model.findByIdAndUpdate(
+            id,
+            {
+                $set: {
+                    isDeleted: false,
+                    deletedAt: null
+                }
+            },
+            { new: true }
+        );
+
+        const restoredCount = await clearCategoryCaches(type);
+
+        console.log(
+            `Redis: Đã xóa ${restoredCount} cache cho danh mục loại ${type}`
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: "Đã kích hoạt lại danh mục thành công",
+            data: restoredCategory
+        });
+    } catch (error) {
+        console.error("Restore Category Error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Lỗi server khi kích hoạt lại danh mục"
+        });
     }
-
-    await Model.findByIdAndUpdate(id, {
-      $set: { 
-        isDeleted: true, 
-        deletedAt: new Date() 
-      }
-    });
-
-    const deletedCount = await clearCategoryCaches(type);
-    console.log(`Redis: Cleared ${deletedCount} cache keys for category type ${type}`);
-
-    return res.status(200).json({
-      success: true,
-      message: "Category moved to trash (Soft Deleted)"
-    });
-  } catch (error) {
-    return res.status(500).json({ error: error.message });
-  }
 };
 
 export const createProduct = async (req, res) => {
@@ -1298,6 +1490,36 @@ export const deleteSpecialAdmin = async (req, res) => {
   }
 };
 
+export const activateSpecialAdmin = async (req, res) => {
+    try {
+        const special = await Special.findByIdAndUpdate(
+            req.params.id,
+            { isActive: true },
+            { new: true },
+        );
+
+        if (!special) {
+            return res.status(404).json({
+                success: false,
+                message: "Không tìm thấy đặc sản"
+            });
+        }
+
+        await clearCache("products:special_model:*");
+
+        return res.status(200).json({
+            success: true,
+            message: "Đã kích hoạt lại đặc sản",
+            data: special,
+        });
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+};
+
 export const deleteProductAdmin = async (req, res) => {
     try {
         const { id } = req.params;
@@ -1331,6 +1553,39 @@ export const deleteProductAdmin = async (req, res) => {
     }
 };
 
+export const activateProductAdmin = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const activatedProduct = await Product.findByIdAndUpdate(
+            id,
+            { isActive: true },
+            { new: true }
+        );
+
+        if (!activatedProduct) {
+            return res.status(404).json({
+                success: false,
+                message: "Không tìm thấy sản phẩm"
+            });
+        }
+
+        await clearCache("products:*");
+
+        return res.status(200).json({
+            success: true,
+            message: "Đã kích hoạt lại sản phẩm thành công",
+            data: activatedProduct
+        });
+    } catch (error) {
+        console.error("Activate Product Error:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Lỗi server khi kích hoạt lại sản phẩm"
+        });
+    }
+};
+
 export const getAllRecipesAdmin = async (req, res) => {
     try {
         const { 
@@ -1342,7 +1597,7 @@ export const getAllRecipesAdmin = async (req, res) => {
             category 
         } = req.query;
 
-        const query = { isDeleted: false };
+        const query = { };
 
         if (search) {
             query.name = { $regex: search, $options: "i" };
@@ -1364,7 +1619,7 @@ export const getAllRecipesAdmin = async (req, res) => {
 
         const recipes = await Recipe.find(query)
             .populate("category", "name") 
-            .select("name image difficulty cookTime weatherTag createdAt slug") 
+            .select("name image difficulty cookTime weatherTag createdAt slug isDeleted") 
             .sort({ createdAt: -1 })
             .skip(skip)
             .limit(parseInt(limit));
@@ -1664,23 +1919,72 @@ export const deleteRecipeAdmin = async (req, res) => {
         const { id } = req.params;
 
         const recipe = await Recipe.findByIdAndUpdate(
-            id, 
-            { isDeleted: true }, 
+            id,
+            { isDeleted: true },
             { new: true }
         );
 
         if (!recipe) {
-            return res.status(404).json({ message: "Recipe not found" });
+            return res.status(404).json({
+                success: false,
+                message: "Không tìm thấy công thức"
+            });
         }
 
         return res.status(200).json({
             success: true,
-            message: "Recipe moved to trash successfully",
+            message: "Đã chuyển công thức vào thùng rác",
             data: recipe
         });
     } catch (error) {
-        console.error("Delete recipe error:", error);
-        return res.status(500).json({ error: "Internal server error" });
+        console.error("Lỗi khi xóa công thức:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Lỗi máy chủ khi xóa công thức"
+        });
+    }
+};
+
+
+export const restoreRecipeAdmin = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const recipe = await Recipe.findById(id);
+
+        if (!recipe) {
+            return res.status(404).json({
+                success: false,
+                message: "Không tìm thấy công thức"
+            });
+        }
+
+        if (!recipe.isDeleted) {
+            return res.status(400).json({
+                success: false,
+                message: "Công thức đang ở trạng thái hoạt động"
+            });
+        }
+
+        const restoredRecipe = await Recipe.findByIdAndUpdate(
+            id,
+            { isDeleted: false },
+            { new: true }
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: "Đã khôi phục công thức thành công",
+            data: restoredRecipe
+        });
+    } catch (error) {
+        console.error("Lỗi khi khôi phục công thức:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Lỗi máy chủ khi khôi phục công thức"
+        });
     }
 };
 
@@ -1709,7 +2013,7 @@ export const getRecipeByIdAdmin = async (req, res) => {
 export const getAllMenus = async (req, res) => {
   try {
     const { page = 1, limit = 10, category } = req.query;
-    const query = { isDeleted: false };
+    const query = { };
 
     if (category && category !== 'undefined' && category !== 'null' && category !== '') {
       query.category = category;
@@ -1947,6 +2251,45 @@ export const deleteMenu = async (req, res) => {
     } catch (error) {
         console.error("Delete menu error:", error);
         return res.status(500).json({ error: "Internal server error" });
+    }
+};
+
+export const activeMenu = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const menu = await Menu.findById(id);
+
+        if (!menu) {
+            return res.status(404).json({
+                success: false,
+                message: "Menu không tồn tại"
+            });
+        }
+
+        if (!menu.isDeleted) {
+            return res.status(400).json({
+                success: false,
+                message: "Menu đang ở trạng thái hoạt động"
+            });
+        }
+
+        menu.isDeleted = false;
+        await menu.save();
+
+        return res.status(200).json({
+            success: true,
+            message: "Kích hoạt lại menu thành công",
+            data: menu
+        });
+
+    } catch (error) {
+        console.error("Active menu error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Lỗi server khi kích hoạt lại menu"
+        });
     }
 };
 

@@ -93,40 +93,58 @@ export const createMenu = async (req, res) => {
 export const getMenus = async (req, res) => {
     try {
         const { categoryId, page = 1, limit = 12 } = req.query;
+
         const currentPage = Number(page);
         const pageSize = Number(limit);
         const skip = (currentPage - 1) * pageSize;
-        
+
         const cacheKey = `menus:list:v2:${categoryId || 'all'}:p:${currentPage}:l:${pageSize}`;
 
         const result = await getOrSetCache(cacheKey, async () => {
-            let filter = { isDeleted: false };
+            let filter = {
+                isDeleted: false
+            };
 
-            if (categoryId && categoryId !== 'all' && categoryId !== 'undefined') {
+            if (
+                categoryId &&
+                categoryId !== 'all' &&
+                categoryId !== 'undefined'
+            ) {
                 if (!mongoose.Types.ObjectId.isValid(categoryId)) {
                     throw new Error("INVALID_ID");
                 }
+
                 filter.category = new mongoose.Types.ObjectId(categoryId);
             }
 
             const [menus, totalItems] = await Promise.all([
-              Menu.find(filter)
-                .populate({
-                    path: 'recipes',
-                    match: { isDeleted: false },
-                    populate: {
-                        path: 'ingredients.ingredientId'
-                    }
-                })
-                .populate('category')
-                .sort({ createdAt: -1 })
-                .skip(skip)
-                .limit(pageSize)
-                .lean(),
-              Menu.countDocuments(filter),
+                Menu.find(filter)
+                    .populate({
+                        path: 'recipes',
+                        match: {
+                            isDeleted: false
+                        },
+                        populate: {
+                            path: 'ingredients.ingredientId'
+                        }
+                    })
+                    .populate({
+                        path: 'category',
+                        match: {
+                            isDeleted: false
+                        }
+                    })
+                    .sort({ createdAt: -1 })
+                    .skip(skip)
+                    .limit(pageSize)
+                    .lean(),
+
+                Menu.countDocuments(filter),
             ]);
 
-            const items = menus.map(menu => {
+            const validMenus = menus.filter(menu => menu.category);
+
+            const items = validMenus.map(menu => {
                 let totalPriceAll = 0;
                 let totalPriceInDB = 0;
 
@@ -135,12 +153,17 @@ export const getMenus = async (req, res) => {
                         if (recipe?.ingredients?.length > 0) {
                             recipe.ingredients.forEach(recipeIng => {
                                 const details = recipeIng.ingredientId;
+
                                 if (details?.price) {
                                     const useQuantity = recipeIng.quantity || 0;
                                     const lineTotal = details.price * useQuantity;
+
                                     totalPriceAll += lineTotal;
 
-                                    if (['Product', 'Special'].includes(recipeIng.itemType) || details.productId) {
+                                    if (
+                                        ['Product', 'Special'].includes(recipeIng.itemType) ||
+                                        details.productId
+                                    ) {
                                         totalPriceInDB += lineTotal;
                                     }
                                 }
@@ -174,7 +197,11 @@ export const getMenus = async (req, res) => {
                     totalPriceInDB: Math.round(totalPriceInDB)
                 };
             });
-            return { items, totalItems };
+
+            return {
+                items,
+                totalItems
+            };
         });
 
         return res.status(200).json({
@@ -182,22 +209,27 @@ export const getMenus = async (req, res) => {
             count: result.items.length,
             data: result.items,
             pagination: {
-              totalItems: result.totalItems,
-              totalPages: Math.ceil(result.totalItems / pageSize),
-              currentPage,
-              pageSize,
-              hasNextPage: currentPage * pageSize < result.totalItems,
+                totalItems: result.totalItems,
+                totalPages: Math.ceil(result.totalItems / pageSize),
+                currentPage,
+                pageSize,
+                hasNextPage: currentPage * pageSize < result.totalItems,
             },
         });
     } catch (error) {
         if (error.message === "INVALID_ID") {
-            return res.status(400).json({ message: "Định dạng Category ID không hợp lệ" });
+            return res.status(400).json({
+                message: "Định dạng ID danh mục không hợp lệ"
+            });
         }
+
         console.error("Get menus error:", error.message);
-        return res.status(500).json({ error: "Lỗi máy chủ nội bộ" });
+
+        return res.status(500).json({
+            error: "Lỗi máy chủ nội bộ"
+        });
     }
 };
-
 export const getMenuDetail = async (req, res) => {
     try {
         const { id } = req.params;

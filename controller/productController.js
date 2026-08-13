@@ -210,45 +210,52 @@ export const createSpecialtyProduct = async (req, res) => {
   }
 };
 export const getPopularProducts = async (req, res) => {
-  try {
-    const limit = Number(req.query.limit) || 10;
-    const region = req.query.region;
+    try {
+        const limit = Number(req.query.limit) || 10;
+        const region = req.query.region;
 
-    const cacheKey = `products:popular:${region || 'all'}:limit:${limit}`;
+        const cacheKey = `products:popular:${region || 'all'}:limit:${limit}`;
 
-    // 2. Sử dụng getOrSetCache
-    const products = await getOrSetCache(cacheKey, async () => {
-      const filter = {
-        isActive: true,
-        isSpecialty: false
-      };
+        const products = await getOrSetCache(cacheKey, async () => {
+            const filter = {
+                isActive: true,
+                isSpecialty: false
+            };
 
-      if (region) {
-        filter.region = region;
-      }
+            if (region) {
+                filter.region = region;
+            }
 
-      return await Product.find(filter)
-        .populate({
-          path: "categoryId",
-          select: "name slug"
-        })
-        .sort({
-          soldCount: -1,
-          favouriteCount: -1,
-          viewCount: -1
-        })
-        .limit(limit)
-        .lean();
-    }, 3600); 
+            const data = await Product.find(filter)
+                .populate({
+                    path: "categoryId",
+                    match: {
+                        isDeleted: false
+                    },
+                    select: "name slug"
+                })
+                .sort({
+                    soldCount: -1,
+                    favouriteCount: -1,
+                    viewCount: -1
+                })
+                .lean();
 
-    return res.status(200).json({
-      code: 200,
-      data: products
-    });
-  } catch (error) {
-    console.error("Get popular products error:", error.message);
-    return res.status(500).json({ error: "Internal server" });
-  }
+            return data
+                .filter(product => product.categoryId)
+                .slice(0, limit);
+        }, 3600);
+
+        return res.status(200).json({
+            code: 200,
+            data: products
+        });
+    } catch (error) {
+        console.error("Get popular products error:", error.message);
+        return res.status(500).json({
+            error: "Internal server"
+        });
+    }
 };
 
 export const createSaleItem = async (req, res) => {
@@ -280,60 +287,74 @@ export const createSaleItem = async (req, res) => {
 }
 
 export const getShockDeals = async (req, res) => {
-  try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 12;
-    const skip = (page - 1) * limit;
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 12;
+        const skip = (page - 1) * limit;
 
-    const cacheKey = `products:shock-deals:p:${page}:l:${limit}`;
+        const cacheKey = `products:shock-deals:p:${page}:l:${limit}`;
 
-    const result = await getOrSetCache(cacheKey, async () => {
-      const now = new Date();
+        const result = await getOrSetCache(cacheKey, async () => {
+            const now = new Date();
 
-      const products = await Product.find({
-        salePercent: { $ne: null },
-        isActive: true,
-        isSpecialty: false
-      })
-        .populate({
-          path: "salePercent",
-          match: {
-            startDate: { $lte: now },
-            endDate: { $gte: now },
-          },
-          select: "percent startDate endDate",
-        })
-        .populate("categoryId", "name slug")
-        .sort({ soldCount: -1 })
-        .lean();
+            const products = await Product.find({
+                salePercent: { $ne: null },
+                isActive: true,
+                isSpecialty: false
+            })
+                .populate({
+                    path: "salePercent",
+                    match: {
+                        startDate: { $lte: now },
+                        endDate: { $gte: now },
+                    },
+                    select: "percent startDate endDate",
+                })
+                .populate({
+                    path: "categoryId",
+                    match: {
+                        isDeleted: false
+                    },
+                    select: "name slug"
+                })
+                .sort({ soldCount: -1 })
+                .lean();
 
-      const validProducts = products.filter(p => p.salePercent);
-      
-      const totalItems = validProducts.length;
-      const paginatedProducts = validProducts.slice(skip, skip + limit);
+            const validProducts = products.filter(
+                p => p.salePercent && p.categoryId
+            );
 
-      return {
-        data: paginatedProducts,
-        totalItems,
-        totalPages: Math.ceil(totalItems / limit)
-      };
-    }, 1800); 
+            const totalItems = validProducts.length;
+            const paginatedProducts = validProducts.slice(
+                skip,
+                skip + limit
+            );
 
-    return res.status(200).json({
-      code: 200,
-      data: result.data,
-      pagination: {
-        totalItems: result.totalItems,
-        totalPages: result.totalPages,
-        currentPage: page,
-        pageSize: limit,
-        hasNextPage: skip + result.data.length < result.totalItems
-      }
-    });
-  } catch (error) {
-    console.error("Get shock deals error:", error);
-    return res.status(500).json({ error: "Internal server" });
-  }
+            return {
+                data: paginatedProducts,
+                totalItems,
+                totalPages: Math.ceil(totalItems / limit)
+            };
+        }, 1800);
+
+        return res.status(200).json({
+            code: 200,
+            data: result.data,
+            pagination: {
+                totalItems: result.totalItems,
+                totalPages: result.totalPages,
+                currentPage: page,
+                pageSize: limit,
+                hasNextPage:
+                    skip + result.data.length < result.totalItems
+            }
+        });
+    } catch (error) {
+        console.error("Get shock deals error:", error);
+        return res.status(500).json({
+            error: "Internal server"
+        });
+    }
 };
 
 export const getPopularProductsByRegion = async (req, res) => {
@@ -431,133 +452,232 @@ export const getSuggestedProducts = async (req, res) => {
   try {
     const { page = 1, limit = 10, sort = "newest" } = req.query;
     const userId = req.user?._id || req.user?.id;
-    console.log("User ID:", userId);
-    
+
     const pageSize = parseInt(limit);
-    const skip = (parseInt(page) - 1) * pageSize;
+    const currentPage = parseInt(page);
+    const skip = (currentPage - 1) * pageSize;
 
-    const cacheKey = `products:suggested:${userId || 'guest'}:p:${page}:l:${limit}:s:${sort}`;
+    const cacheKey = `products:suggested:${userId || "guest"}:p:${page}:l:${limit}:s:${sort}`;
 
-    const result = await getOrSetCache(cacheKey, async () => {
-      const now = new Date();
-      let suggestedIds = [];
-      
-      if (userId) {
-        try {
+    const result = await getOrSetCache(
+      cacheKey,
+      async () => {
+        const now = new Date();
+        let suggestedIds = [];
 
-          const aiUrl = `https://mc-prod.onrender.com/recommend/${userId}`;
-          const aiResponse = await axios.get(aiUrl, { timeout: 5000 }) // Tăng lên 5s cho chắc
-            .catch((err) => {
-              console.error(`[AXIOS_ERROR] URL: ${aiUrl} | Message: ${err.message}`);
-              return null;
-            });
+        if (userId) {
+          try {
+            const aiUrl = `https://mc-prod.onrender.com/recommend/${userId}`;
 
-          if (aiResponse?.data) {
-            const rawData = aiResponse.data.data || aiResponse.data.recommendations || [];
-            suggestedIds = rawData.map(item => (item._id || item).toString());
+            const aiResponse = await axios
+              .get(aiUrl, { timeout: 5000 })
+              .catch((err) => {
+                console.error(
+                  `[AXIOS_ERROR] URL: ${aiUrl} | Message: ${err.message}`
+                );
+                return null;
+              });
+
+            if (aiResponse?.data) {
+              const rawData =
+                aiResponse.data.data ||
+                aiResponse.data.recommendations ||
+                [];
+
+              suggestedIds = rawData.map((item) =>
+                (item._id || item).toString()
+              );
+            }
+          } catch (err) {
+            console.error(
+              "[AI_ERROR] Fallback to history:",
+              err.message
+            );
           }
-          
-        } catch (err) {
-          console.error("[AI_ERROR] Fallback to history:", err.message);
         }
-      }
 
-      let categoryIds = [];
-      if (suggestedIds.length === 0 && userId) {
-        const user = await User.findById(userId).select("viewHistory").lean();
-        if (user?.viewHistory?.length > 0) {
-          categoryIds = user.viewHistory.slice(0, 5).map(item => item.categoryId.toString());
+        let categoryIds = [];
+
+        if (suggestedIds.length === 0 && userId) {
+          const user = await User.findById(userId)
+            .select("viewHistory")
+            .lean();
+
+          if (user?.viewHistory?.length > 0) {
+            categoryIds = user.viewHistory
+              .slice(0, 5)
+              .map((item) => item.categoryId.toString());
+          }
         }
-      }
 
-      const match = { isActive: true, isSpecialty: false };
-      if (suggestedIds.length > 0) {
-        match._id = { $in: suggestedIds.map(id => new mongoose.Types.ObjectId(id)) };
-      } else if (categoryIds.length > 0) {
-        match.categoryId = { $in: categoryIds.map(id => new mongoose.Types.ObjectId(id)) };
-      }
+        const match = {
+          isActive: true,
+          isSpecialty: false
+        };
 
-      const sortMap = {
-        newest: { createdAt: -1 },
-        price_asc: { finalPrice: 1 },
-        price_desc: { finalPrice: -1 },
-        sold_desc: { soldCount: -1 }
-      };
+        if (suggestedIds.length > 0) {
+          match._id = {
+            $in: suggestedIds.map(
+              (id) => new mongoose.Types.ObjectId(id)
+            )
+          };
+        } else if (categoryIds.length > 0) {
+          match.categoryId = {
+            $in: categoryIds.map(
+              (id) => new mongoose.Types.ObjectId(id)
+            )
+          };
+        }
 
-      const aiIdObjects = suggestedIds.map(id => new mongoose.Types.ObjectId(id));
+        const sortMap = {
+          newest: { createdAt: -1 },
+          price_asc: { finalPrice: 1 },
+          price_desc: { finalPrice: -1 },
+          sold_desc: { soldCount: -1 }
+        };
 
-      return await Product.aggregate([
-        { $match: match },
-        {
-          $lookup: {
-            from: "saleitems",
-            localField: "salePercent",
-            foreignField: "_id",
-            as: "sale",
+        const aiIdObjects = suggestedIds.map(
+          (id) => new mongoose.Types.ObjectId(id)
+        );
+
+        return await Product.aggregate([
+          {
+            $match: match
           },
-        },
-        { $unwind: { path: "$sale", preserveNullAndEmptyArrays: true } },
-        {
-          $addFields: {
-            // Giữ nguyên thứ tự gợi ý từ AI nếu có
-            aiOrder: { $indexOfArray: [aiIdObjects, "$_id"] },
-            isPromotion: {
-              $cond: [
-                {
-                  $and: [
-                    { $ifNull: ["$sale.percent", false] },
-                    { $lte: ["$sale.startDate", now] },
-                    { $gte: ["$sale.endDate", now] },
-                  ],
-                },
-                1, 0,
-              ],
-            },
-            finalPrice: {
-              $cond: [
-                { $eq: ["$isPromotion", 1] },
-                { $multiply: ["$price", { $divide: [{ $subtract: [100, "$sale.percent"] }, 100] }] },
-                "$price",
-              ],
-            },
-            salePercent: {
-              $cond: [
-                { $eq: ["$isPromotion", 1] },
-                { percent: "$sale.percent", startDate: "$sale.startDate", endDate: "$sale.endDate" },
-                null,
-              ],
-            },
+          {
+            $lookup: {
+              from: "categories",
+              localField: "categoryId",
+              foreignField: "_id",
+              as: "categoryDoc"
+            }
           },
-        },
-        { 
-          $sort: suggestedIds.length > 0 
-            ? { aiOrder: 1 } 
-            : (sortMap[sort] || sortMap.sold_desc) 
-        },
-        {
-          $facet: {
-            metadata: [{ $count: "total" }],
-            data: [
-              { $skip: skip },
-              { $limit: pageSize },
-              {
-                $lookup: {
-                  from: "categories",
-                  localField: "categoryId",
-                  foreignField: "_id",
-                  as: "categoryDoc",
-                },
+          {
+            $unwind: "$categoryDoc"
+          },
+          {
+            $match: {
+              "categoryDoc.isDeleted": false
+            }
+          },
+          {
+            $lookup: {
+              from: "saleitems",
+              localField: "salePercent",
+              foreignField: "_id",
+              as: "sale"
+            }
+          },
+          {
+            $unwind: {
+              path: "$sale",
+              preserveNullAndEmptyArrays: true
+            }
+          },
+          {
+            $addFields: {
+              aiOrder: {
+                $indexOfArray: [
+                  aiIdObjects,
+                  "$_id"
+                ]
               },
-              { $unwind: "$categoryDoc" },
-              { $project: { sale: 0, isPromotion: 0, aiOrder: 0 } },
-            ],
+              isPromotion: {
+                $cond: [
+                  {
+                    $and: [
+                      { $ifNull: ["$sale.percent", false] },
+                      { $lte: ["$sale.startDate", now] },
+                      { $gte: ["$sale.endDate", now] }
+                    ]
+                  },
+                  1,
+                  0
+                ]
+              },
+              finalPrice: {
+                $cond: [
+                  {
+                    $and: [
+                      { $ifNull: ["$sale.percent", false] },
+                      { $lte: ["$sale.startDate", now] },
+                      { $gte: ["$sale.endDate", now] }
+                    ]
+                  },
+                  {
+                    $multiply: [
+                      "$price",
+                      {
+                        $divide: [
+                          {
+                            $subtract: [
+                              100,
+                              "$sale.percent"
+                            ]
+                          },
+                          100
+                        ]
+                      }
+                    ]
+                  },
+                  "$price"
+                ]
+              },
+              salePercent: {
+                $cond: [
+                  {
+                    $and: [
+                      { $ifNull: ["$sale.percent", false] },
+                      { $lte: ["$sale.startDate", now] },
+                      { $gte: ["$sale.endDate", now] }
+                    ]
+                  },
+                  {
+                    percent: "$sale.percent",
+                    startDate: "$sale.startDate",
+                    endDate: "$sale.endDate"
+                  },
+                  null
+                ]
+              }
+            }
           },
-        },
-      ]);
-    }, 600); 
+          {
+            $sort: suggestedIds.length > 0
+              ? { aiOrder: 1 }
+              : (sortMap[sort] || sortMap.sold_desc)
+          },
+          {
+            $facet: {
+              metadata: [
+                {
+                  $count: "total"
+                }
+              ],
+              data: [
+                {
+                  $skip: skip
+                },
+                {
+                  $limit: pageSize
+                },
+                {
+                  $project: {
+                    sale: 0,
+                    isPromotion: 0,
+                    aiOrder: 0
+                  }
+                }
+              ]
+            }
+          }
+        ]);
+      },
+      600
+    );
 
-    const totalItems = result[0].metadata[0]?.total || 0;
-    const products = result[0].data;
+    const totalItems = result[0]?.metadata[0]?.total || 0;
+    const products = result[0]?.data || [];
 
     return res.status(200).json({
       code: 200,
@@ -565,88 +685,130 @@ export const getSuggestedProducts = async (req, res) => {
       pagination: {
         totalItems,
         totalPages: Math.ceil(totalItems / pageSize),
-        currentPage: parseInt(page),
+        currentPage,
         pageSize,
         hasNextPage: skip + products.length < totalItems
       }
     });
-
   } catch (error) {
     console.error("getSuggestedProducts error:", error);
-    return res.status(500).json({ code: 500, message: "Internal server error" });
+
+    return res.status(500).json({
+      code: 500,
+      message: "Internal server error"
+    });
   }
 };
+
 export const getProductsByCategory = async (req, res) => {
-    try {
-        const { categoryId, sort = "newest" } = req.query;
-        
-        const cacheKey = `products:cat:${categoryId || 'all'}:sort:${sort}`;
+  try {
+    const { categoryId, sort = "newest" } = req.query;
 
-        const products = await getOrSetCache(cacheKey, async () => {
-            const now = new Date();
-            const match = { isActive: true, isSpecialty: false };
-            
-            if (categoryId) {
-                match.categoryId = new mongoose.Types.ObjectId(categoryId);
+    const cacheKey = `products:cat:${categoryId || "all"}:sort:${sort}`;
+
+    const products = await getOrSetCache(cacheKey, async () => {
+      const now = new Date();
+
+      const match = {
+        isActive: true,
+        isSpecialty: false
+      };
+
+      if (categoryId) {
+        match.categoryId = new mongoose.Types.ObjectId(categoryId);
+      }
+
+      return await Product.aggregate([
+        {
+          $match: match
+        },
+        {
+          $lookup: {
+            from: "categories",
+            localField: "categoryId",
+            foreignField: "_id",
+            as: "categoryDetails"
+          }
+        },
+        {
+          $unwind: "$categoryDetails"
+        },
+        {
+          $match: {
+            "categoryDetails.isDeleted": false
+          }
+        },
+        {
+          $lookup: {
+            from: "saleitems",
+            localField: "salePercent",
+            foreignField: "_id",
+            as: "saleInfo"
+          }
+        },
+        {
+          $unwind: {
+            path: "$saleInfo",
+            preserveNullAndEmptyArrays: true
+          }
+        },
+        {
+          $addFields: {
+            finalPrice: {
+              $cond: {
+                if: {
+                  $and: [
+                    { $ifNull: ["$saleInfo", false] },
+                    { $lte: ["$saleInfo.startDate", now] },
+                    { $gte: ["$saleInfo.endDate", now] }
+                  ]
+                },
+                then: {
+                  $multiply: [
+                    "$price",
+                    {
+                      $divide: [
+                        { $subtract: [100, "$saleInfo.percent"] },
+                        100
+                      ]
+                    }
+                  ]
+                },
+                else: "$price"
+              }
             }
+          }
+        },
+        {
+          $sort:
+            sort === "price_asc"
+              ? { finalPrice: 1 }
+              : sort === "price_desc"
+                ? { finalPrice: -1 }
+                : sort === "sold_desc"
+                  ? { soldCount: -1 }
+                  : { createdAt: -1 }
+        },
+        {
+          $project: {
+            saleInfo: 0
+          }
+        }
+      ]);
+    });
 
-            return await Product.aggregate([
-                { $match: match },
-                {
-                    $lookup: {
-                        from: "saleitems",
-                        localField: "salePercent",
-                        foreignField: "_id",
-                        as: "saleInfo",
-                    },
-                },
-                { $unwind: { path: "$saleInfo", preserveNullAndEmptyArrays: true } },
-                {
-                    $addFields: {
-                        finalPrice: {
-                            $cond: {
-                                if: {
-                                    $and: [
-                                        { $ifNull: ["$saleInfo", false] },
-                                        { $lte: ["$saleInfo.startDate", now] },
-                                        { $gte: ["$saleInfo.endDate", now] },
-                                    ],
-                                },
-                                then: {
-                                    $multiply: [
-                                        "$price",
-                                        { $divide: [{ $subtract: [100, "$saleInfo.percent"] }, 100] },
-                                    ],
-                                },
-                                else: "$price",
-                            },
-                        },
-                    },
-                },
-                { 
-                    $sort: sort === "price_asc" ? { finalPrice: 1 } : 
-                           sort === "price_desc" ? { finalPrice: -1 } :
-                           sort === "sold_desc" ? { soldCount: -1 } : 
-                           { createdAt: -1 } 
-                },
-                {
-                    $lookup: {
-                        from: "categories",
-                        localField: "categoryId",
-                        foreignField: "_id",
-                        as: "categoryDetails",
-                    },
-                },
-                { $unwind: "$categoryDetails" },
-                { $project: { saleInfo: 0 } },
-            ]);
-        });
+    return res.status(200).json({
+      code: 200,
+      data: products
+    });
+  } catch (error) {
+    console.error("getProductsByCategory error:", error);
 
-        return res.status(200).json({ code: 200, data: products });
-    } catch (error) {
-        console.error("getProductsByCategory error:", error);
-        return res.status(500).json({ code: 500, message: "Internal server error" });
-    }
+    return res.status(500).json({
+      code: 500,
+      message: "Internal server error"
+    });
+  }
 };
 export const getAllProductAdmin = async (req, res) => {
   try {
@@ -671,22 +833,36 @@ export const getAllProductAdmin = async (req, res) => {
 
 export const getProductsByRegion = async (req, res) => {
   try {
-    const { region, categoryId, sort = "newest", page = 1, limit = 10 } = req.query;
-    
+    const {
+      region,
+      categoryId,
+      sort = "newest",
+      page = 1,
+      limit = 10
+    } = req.query;
+
     if (!["bac", "trung", "nam"].includes(region)) {
-      return res.status(400).json({ code: 400, message: "Region must be bac | trung | nam" });
+      return res.status(400).json({
+        code: 400,
+        message: "Region must be bac | trung | nam"
+      });
     }
 
     const pageSize = parseInt(limit);
-    const skip = (parseInt(page) - 1) * pageSize;
+    const currentPage = parseInt(page);
+    const skip = (currentPage - 1) * pageSize;
 
-    // 1. Tạo Cache Key chứa toàn bộ tham số lọc và phân trang
-    const cacheKey = `products:region:${region}:cat:${categoryId || 'all'}:sort:${sort}:p:${page}:l:${limit}`;
+    const cacheKey = `products:region:${region}:cat:${categoryId || "all"}:sort:${sort}:p:${page}:l:${limit}`;
 
     const result = await getOrSetCache(cacheKey, async () => {
       const now = new Date();
-      const match = { region, isActive: true, isSpecialty: false };
-      
+
+      const match = {
+        region,
+        isActive: true,
+        isSpecialty: false
+      };
+
       if (categoryId) {
         match.categoryId = new mongoose.Types.ObjectId(categoryId);
       }
@@ -699,18 +875,40 @@ export const getProductsByRegion = async (req, res) => {
         sale: { isPromotion: -1, soldCount: -1 }
       };
 
-      // Tối ưu: Tính toán filter và sort trước khi $facet để giảm tải RAM
       return await Product.aggregate([
-        { $match: match },
+        {
+          $match: match
+        },
+        {
+          $lookup: {
+            from: "categories",
+            localField: "categoryId",
+            foreignField: "_id",
+            as: "categoryDoc"
+          }
+        },
+        {
+          $unwind: "$categoryDoc"
+        },
+        {
+          $match: {
+            "categoryDoc.isDeleted": false
+          }
+        },
         {
           $lookup: {
             from: "saleitems",
             localField: "salePercent",
             foreignField: "_id",
-            as: "sale",
-          },
+            as: "sale"
+          }
         },
-        { $unwind: { path: "$sale", preserveNullAndEmptyArrays: true } },
+        {
+          $unwind: {
+            path: "$sale",
+            preserveNullAndEmptyArrays: true
+          }
+        },
         {
           $addFields: {
             isPromotion: {
@@ -719,11 +917,12 @@ export const getProductsByRegion = async (req, res) => {
                   $and: [
                     { $ifNull: ["$sale.percent", false] },
                     { $lte: ["$sale.startDate", now] },
-                    { $gte: ["$sale.endDate", now] },
-                  ],
+                    { $gte: ["$sale.endDate", now] }
+                  ]
                 },
-                1, 0,
-              ],
+                1,
+                0
+              ]
             },
             finalPrice: {
               $cond: [
@@ -731,53 +930,67 @@ export const getProductsByRegion = async (req, res) => {
                   $and: [
                     { $ifNull: ["$sale.percent", false] },
                     { $lte: ["$sale.startDate", now] },
-                    { $gte: ["$sale.endDate", now] },
-                  ],
+                    { $gte: ["$sale.endDate", now] }
+                  ]
                 },
-                { $multiply: ["$price", { $divide: [{ $subtract: [100, "$sale.percent"] }, 100] }] },
-                "$price",
-              ],
+                {
+                  $multiply: [
+                    "$price",
+                    {
+                      $divide: [
+                        { $subtract: [100, "$sale.percent"] },
+                        100
+                      ]
+                    }
+                  ]
+                },
+                "$price"
+              ]
             },
-            // Trả về object salePercent gọn hơn ngay tại đây
             salePercent: {
               $cond: [
                 { $ifNull: ["$sale", false] },
-                { percent: "$sale.percent", startDate: "$sale.startDate", endDate: "$sale.endDate" },
-                null,
-              ],
-            },
-          },
+                {
+                  percent: "$sale.percent",
+                  startDate: "$sale.startDate",
+                  endDate: "$sale.endDate"
+                },
+                null
+              ]
+            }
+          }
         },
-        { $sort: sortMap[sort] || sortMap.newest },
+        {
+          $sort: sortMap[sort] || sortMap.newest
+        },
         {
           $facet: {
-            metadata: [{ $count: "total" }],
-            data: [
-              { $skip: skip },
-              { $limit: pageSize },
+            metadata: [
               {
-                $lookup: {
-                  from: "categories",
-                  localField: "categoryId",
-                  foreignField: "_id",
-                  as: "categoryDoc",
-                },
+                $count: "total"
+              }
+            ],
+            data: [
+              {
+                $skip: skip
               },
-              { $unwind: "$categoryDoc" },
+              {
+                $limit: pageSize
+              },
               {
                 $project: {
                   sale: 0,
-                  isPromotion: 0,
-                },
-              },
-            ],
-          },
-        },
+                  isPromotion: 0
+                }
+              }
+            ]
+          }
+        }
       ]);
     });
 
-    const totalItems = result[0].metadata[0]?.total || 0;
-    const products = result[0].data;
+    const totalItems = result[0]?.metadata[0]?.total || 0;
+    const products = result[0]?.data || [];
 
     return res.status(200).json({
       code: 200,
@@ -785,14 +998,18 @@ export const getProductsByRegion = async (req, res) => {
       pagination: {
         totalItems,
         totalPages: Math.ceil(totalItems / pageSize),
-        currentPage: parseInt(page),
+        currentPage,
         pageSize,
         hasNextPage: skip + products.length < totalItems
       }
     });
   } catch (error) {
     console.error("getProductsByRegion error:", error);
-    return res.status(500).json({ code: 500, message: "Internal server error" });
+
+    return res.status(500).json({
+      code: 500,
+      message: "Internal server error"
+    });
   }
 };
 
@@ -949,26 +1166,31 @@ export const getProductsByFilter = async (req, res) => {
 
     const products = await getOrSetCache(cacheKey, async () => {
       const now = new Date();
+
       const filter = {
         isActive: true,
         isSpecialty: false
       };
 
-      let sortOption = { createdAt: -1 }; 
+      let sortOption = { createdAt: -1 };
 
       switch (sort) {
         case "price_asc":
           sortOption = { price: 1 };
           break;
+
         case "price_desc":
           sortOption = { price: -1 };
           break;
+
         case "sold_desc":
           sortOption = { soldCount: -1 };
           break;
+
         case "sale":
-          sortOption = { soldCount: -1 }; 
+          sortOption = { soldCount: -1 };
           break;
+
         case "newest":
         default:
           sortOption = { createdAt: -1 };
@@ -978,209 +1200,287 @@ export const getProductsByFilter = async (req, res) => {
       let data = await Product.find(filter)
         .populate({
           path: "salePercent",
-          match: { startDate: { $lte: now }, endDate: { $gte: now } },
+          match: {
+            startDate: { $lte: now },
+            endDate: { $gte: now }
+          },
           select: "percent"
         })
-        .populate("categoryId", "name slug")
+        .populate({
+          path: "categoryId",
+          match: {
+            isDeleted: false
+          },
+          select: "name slug"
+        })
         .sort(sortOption)
-        .lean(); 
+        .lean();
+
+      data = data.filter((product) => product.categoryId);
 
       if (sort === "sale") {
-        const withSale = data.filter(p => p.salePercent);
-        const withoutSale = data.filter(p => !p.salePercent);
+        const withSale = data.filter((product) => product.salePercent);
+        const withoutSale = data.filter((product) => !product.salePercent);
+
         data = [...withSale, ...withoutSale];
       }
 
       return data;
-    }, 600); 
+    }, 600);
 
     return res.status(200).json({
       code: 200,
-      data: products,
+      data: products
     });
   } catch (error) {
     console.error("getProductsByFilter error:", error);
+
     return res.status(500).json({
       code: 500,
-      message: "Internal server error",
+      message: "Internal server error"
     });
   }
 };
 
 export const getProductDetail = async (req, res) => {
-  try {
-    const { id } = req.params;
+    try {
+        const { id } = req.params;
 
-    const identifierFilter = mongoose.Types.ObjectId.isValid(id) ? { _id: id } : { slug: id };
-    const checkProduct = await Product.findOne(identifierFilter).select("_id isSpecialty");
-    if (!checkProduct) {
-      return res.status(404).json({ code: 404, message: "Product not found" });
-    }
+        const identifierFilter = mongoose.Types.ObjectId.isValid(id)
+            ? { _id: id }
+            : { slug: id };
 
-    const productId = checkProduct._id;
+        const checkProduct = await Product.findOne(identifierFilter)
+            .select("_id isSpecialty");
 
-    const pipeline = [
-      {
-        $match: {
-          _id: productId,
-          isActive: true,
-        },
-      },
-      {
-        $lookup: {
-          from: "saleitems",
-          localField: "salePercent",
-          foreignField: "_id",
-          as: "sale",
-        },
-      },
-      {
-        $unwind: { path: "$sale", preserveNullAndEmptyArrays: true },
-      },
-      {
-        $addFields: {
-          salePercent: {
-            $cond: [
-              { $ifNull: ["$sale", false] },
-              {
-                percent: "$sale.percent",
-                startDate: "$sale.startDate",
-                endDate: "$sale.endDate",
-              },
-              null,
-            ],
-          },
-          finalPrice: {
-            $cond: [
-              {
-                $and: [
-                  { $ifNull: ["$sale.percent", false] },
-                  { $lte: ["$sale.startDate", new Date()] },
-                  { $gte: ["$sale.endDate", new Date()] },
-                ],
-              },
-              {
-                $multiply: [
-                  "$price",
-                  { $divide: [{ $subtract: [100, "$sale.percent"] }, 100] },
-                ],
-              },
-              "$price",
-            ],
-          },
-        },
-      },
-    ];
+        if (!checkProduct) {
+            return res.status(404).json({
+                code: 404,
+                message: "Không tìm thấy sản phẩm"
+            });
+        }
 
-    if (!checkProduct.isSpecialty) {
-      pipeline.push(
-        {
-          $lookup: {
-            from: "categories",
-            localField: "categoryId",
-            foreignField: "_id",
-            as: "categoryId",
-          },
-        },
-        { $unwind: { path: "$categoryId", preserveNullAndEmptyArrays: true } }
-      );
-    }
+        const productId = checkProduct._id;
 
-    pipeline.push(
-      {
-        $lookup: {
-          from: "ingredients",
-          localField: "_id",
-          foreignField: "productId",
-          as: "mappedIngredients",
-        },
-      },
-      {
-        $lookup: {
-          from: "recipes",
-          let: { 
-            pId: "$_id", 
-            mappedIngIds: "$mappedIngredients._id" 
-          },
-          pipeline: [
+        const pipeline = [
             {
-              $match: {
-                $expr: {
-                  $and: [
-                    { $eq: ["$isDeleted", false] },
-                    {
-                      $gt: [
-                        {
-                          $size: {
-                            $filter: {
-                              input: "$ingredients",
-                              as: "ing",
-                              cond: {
-                                $or: [
-                                  {
-                                    $and: [
-                                      { $eq: ["$$ing.itemType", "Product"] },
-                                      { $eq: ["$$ing.ingredientId", "$$pId"] }
-                                    ]
-                                  },
-                                  {
-                                    $and: [
-                                      { $eq: ["$$ing.itemType", "Ingredient"] },
-                                      { $in: ["$$ing.ingredientId", "$$mappedIngIds"] }
-                                    ]
-                                  }
-                                ]
-                              }
-                            }
-                          }
-                        },
-                        0
-                      ]
-                    }
-                  ]
+                $match: {
+                    _id: productId,
+                    isActive: true,
+                },
+            },
+            {
+                $lookup: {
+                    from: "saleitems",
+                    localField: "salePercent",
+                    foreignField: "_id",
+                    as: "sale",
+                },
+            },
+            {
+                $unwind: {
+                    path: "$sale",
+                    preserveNullAndEmptyArrays: true,
+                },
+            },
+            {
+                $addFields: {
+                    salePercent: {
+                        $cond: [
+                            { $ifNull: ["$sale", false] },
+                            {
+                                percent: "$sale.percent",
+                                startDate: "$sale.startDate",
+                                endDate: "$sale.endDate",
+                            },
+                            null,
+                        ],
+                    },
+                    finalPrice: {
+                        $cond: [
+                            {
+                                $and: [
+                                    { $ifNull: ["$sale.percent", false] },
+                                    { $lte: ["$sale.startDate", new Date()] },
+                                    { $gte: ["$sale.endDate", new Date()] },
+                                ],
+                            },
+                            {
+                                $multiply: [
+                                    "$price",
+                                    {
+                                        $divide: [
+                                            { $subtract: [100, "$sale.percent"] },
+                                            100,
+                                        ],
+                                    },
+                                ],
+                            },
+                            "$price",
+                        ],
+                    },
+                },
+            },
+        ];
+
+        if (!checkProduct.isSpecialty) {
+            pipeline.push(
+                {
+                    $lookup: {
+                        from: "categories",
+                        let: { categoryId: "$categoryId" },
+                        pipeline: [
+                            {
+                                $match: {
+                                    $expr: {
+                                        $and: [
+                                            { $eq: ["$_id", "$$categoryId"] },
+                                            { $eq: ["$isDeleted", false] },
+                                        ],
+                                    },
+                                },
+                            },
+                        ],
+                        as: "categoryId",
+                    },
+                },
+                {
+                    $unwind: {
+                        path: "$categoryId",
+                        preserveNullAndEmptyArrays: false,
+                    },
                 }
-              }
+            );
+        }
+
+        pipeline.push(
+            {
+                $lookup: {
+                    from: "ingredients",
+                    localField: "_id",
+                    foreignField: "productId",
+                    as: "mappedIngredients",
+                },
             },
             {
-              $lookup: {
-                from: "categoryrecipes",
-                localField: "category",
-                foreignField: "_id",
-                as: "category",
-              },
+                $lookup: {
+                    from: "recipes",
+                    let: {
+                        pId: "$_id",
+                        mappedIngIds: "$mappedIngredients._id",
+                    },
+                    pipeline: [
+                        {
+                            $match: {
+                                $expr: {
+                                    $and: [
+                                        { $eq: ["$isDeleted", false] },
+                                        {
+                                            $gt: [
+                                                {
+                                                    $size: {
+                                                        $filter: {
+                                                            input: "$ingredients",
+                                                            as: "ing",
+                                                            cond: {
+                                                                $or: [
+                                                                    {
+                                                                        $and: [
+                                                                            {
+                                                                                $eq: [
+                                                                                    "$$ing.itemType",
+                                                                                    "Product",
+                                                                                ],
+                                                                            },
+                                                                            {
+                                                                                $eq: [
+                                                                                    "$$ing.ingredientId",
+                                                                                    "$$pId",
+                                                                                ],
+                                                                            },
+                                                                        ],
+                                                                    },
+                                                                    {
+                                                                        $and: [
+                                                                            {
+                                                                                $eq: [
+                                                                                    "$$ing.itemType",
+                                                                                    "Ingredient",
+                                                                                ],
+                                                                            },
+                                                                            {
+                                                                                $in: [
+                                                                                    "$$ing.ingredientId",
+                                                                                    "$$mappedIngIds",
+                                                                                ],
+                                                                            },
+                                                                        ],
+                                                                    },
+                                                                ],
+                                                            },
+                                                        },
+                                                    },
+                                                },
+                                                0,
+                                            ],
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        {
+                            $lookup: {
+                                from: "categoryrecipes",
+                                localField: "category",
+                                foreignField: "_id",
+                                as: "category",
+                            },
+                        },
+                        {
+                            $unwind: {
+                                path: "$category",
+                                preserveNullAndEmptyArrays: true,
+                            },
+                        },
+                        {
+                            $sort: {
+                                createdAt: -1,
+                            },
+                        },
+                    ],
+                    as: "relatedRecipes",
+                },
             },
-            { $unwind: { path: "$category", preserveNullAndEmptyArrays: true } },
-            { $sort: { createdAt: -1 } },
-          ],
-          as: "relatedRecipes",
-        },
-      },
-      {
-        $project: {
-          sale: 0,
-          mappedIngredients: 0,
-        },
-      }
-    );
+            {
+                $project: {
+                    sale: 0,
+                    mappedIngredients: 0,
+                },
+            }
+        );
 
-    const products = await Product.aggregate(pipeline);
-    
-    if (products && products.length > 0) {
-      const currentProductId = products[0]._id.toString();
-      
-      if (req.user && req.user.id) {
-        triggerAIUpdate(req.user.id, currentProductId);
-      }
+        const products = await Product.aggregate(pipeline);
+
+        if (products && products.length > 0) {
+            const currentProductId = products[0]._id.toString();
+
+            if (req.user && req.user.id) {
+                triggerAIUpdate(req.user.id, currentProductId);
+            }
+        }
+
+        return res.status(200).json({
+            code: 200,
+            data: products[0] || null,
+        });
+    } catch (error) {
+        console.error("getProductDetail error:", error);
+
+        return res.status(500).json({
+            code: 500,
+            message: "Lỗi máy chủ nội bộ",
+        });
     }
-
-    return res.status(200).json({
-      code: 200,
-      data: products[0] || null,
-    });
-  } catch (error) {
-    console.error("getProductDetail error:", error);
-    return res.status(500).json({ code: 500, message: "Internal server error" });
-  }
 };
 
 import { generateVietnameseRegex } from "../utils/regexLanguage.js";
@@ -1215,11 +1515,16 @@ export const searchProducts = async (req, res) => {
           as: "category",
         },
       },
-      { 
+      {
         $unwind: {
           path: "$category",
-          preserveNullAndEmptyArrays: true 
-        } 
+          preserveNullAndEmptyArrays: false
+        }
+      },
+      {
+        $match: {
+          "category.isDeleted": false
+        }
       },
       {
         $lookup: {
