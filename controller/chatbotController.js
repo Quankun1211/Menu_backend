@@ -1,61 +1,207 @@
 import Groq from "groq-sdk";
 import dotenv from "dotenv";
+import { searchProducts } from "../services/productQuery.js";
+import {
+    detectIntent,
+    CHATBOT_INTENTS,
+} from "../utils/chatbotIntent.js";
+
 dotenv.config();
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const groq = new Groq({
+    apiKey: process.env.GROQ_API_KEY,
+});
+
+const PRODUCT_INTENTS = [
+    CHATBOT_INTENTS.PRODUCT_SEARCH,
+    CHATBOT_INTENTS.PRODUCT_DETAIL,
+    CHATBOT_INTENTS.PRODUCT_PRICE,
+    CHATBOT_INTENTS.PRODUCT_STOCK,
+];
+
+const SYSTEM_INSTRUCTION = `
+Bạn là "Bếp Phó" - một chuyên gia am hiểu sâu sắc về ẩm thực dân gian Việt Nam và dinh dưỡng an toàn.
+
+PHONG CÁCH:
+- Thân thiện, mộc mạc, ngắn gọn.
+- Trả lời bằng tiếng Việt.
+- Không tự bịa thông tin.
+
+QUY TẮC SẢN PHẨM:
+- Khi được cung cấp dữ liệu sản phẩm từ DATABASE, chỉ sử dụng dữ liệu đó.
+- Không tự bịa giá, tồn kho, nguồn gốc hoặc sản phẩm.
+- Nếu có sản phẩm phù hợp, trả lời trực tiếp câu hỏi của khách.
+- Nếu có nhiều sản phẩm phù hợp, liệt kê những sản phẩm phù hợp nhất.
+- Có thể đề cập tên, giá, đơn vị, mô tả, nguồn gốc, tồn kho, khuyến mãi.
+- Không cần hiển thị URL ảnh hoặc slug trong nội dung câu trả lời.
+- Thông tin hình ảnh và điều hướng sản phẩm sẽ được frontend xử lý.
+- Nếu không tìm thấy sản phẩm phù hợp, nói rõ rằng hiện chưa tìm thấy sản phẩm phù hợp.
+
+QUY TẮC AN TOÀN:
+
+Nếu người dùng hỏi về sự kết hợp thực phẩm, hãy cảnh báo nếu gặp:
+
+1. Mật ong + Đậu phụ/Tào phớ
+2. Mật ong + Sắn dây
+3. Trứng + Sữa đậu nành
+4. Gan lợn + Giá đỗ
+5. Sữa + Cam/Quýt
+6. Tôm/Hải sản + Trái cây giàu Vitamin C
+7. Thịt chó + Nước chè
+
+Nếu phát hiện vấn đề an toàn:
+- Bắt đầu câu trả lời bằng "⚠️ CẢNH BÁO AN TOÀN".
+- Đặt sức khỏe người dùng lên hàng đầu.
+`;
 
 export const askChatbot = async (req, res) => {
     try {
-        const { message, history } = req.body;
+        const { message, history = [] } = req.body;
 
-        if (!message) {
-            return res.status(400).json({ error: "Message is required" });
+        if (!message?.trim()) {
+            return res.status(400).json({
+                error: "Message is required",
+            });
         }
 
-        const messages = (history || []).map(msg => ({
-            role: msg.role === 'model' ? 'assistant' : 'user',
-            content: msg.parts[0].text
-        }));
+        const userMessage = message.trim();
 
-        messages.push({ role: "user", content: message });
+        const intent = await detectIntent(userMessage);
 
-        const SYSTEM_INSTRUCTION = `
-Bạn là "Bếp Phó" - một chuyên gia am hiểu sâu sắc về ẩm thực dân gian Việt Nam và dinh dưỡng an toàn.
-PHONG CÁCH: Thân thiện, mộc mạc, ngắn gọn.
+        console.log("\n========== CHATBOT ==========");
+        console.log("[CHATBOT] Message:", userMessage);
+        console.log("[CHATBOT] Intent:", intent);
 
-QUY TẮC AN TOÀN TUYỆT ĐỐI (Dựa trên kiến thức Đông Y và Dinh dưỡng):
-Nếu người dùng hỏi về sự kết hợp thực phẩm, bạn PHẢI cảnh báo nguy hiểm nếu gặp các cặp sau:
-1. Mật ong + Đậu phụ/Tào phớ: Gây tiêu chảy, rối loạn tiêu hóa.
-2. Mật ong + Sắn dây: Gây trướng bụng, nguy hiểm tính mạng nếu cơ địa yếu.
-3. Trứng + Sữa đậu nành: Cản trở hấp thụ protein.
-4. Gan lợn + Giá đỗ: Vitamin C trong giá bị oxy hóa, mất chất.
-5. Sữa + Cam/Quýt: Acid làm kết tủa protein sữa gây khó tiêu.
-6. Tôm/Hải sản + Trái cây giàu Vitamin C (Cam, chanh): Có thể tạo ra hợp chất giống thạch tín gây ngộ độc.
-7. Thịt chó + Nước chè (Trà): Gây táo bón, tích tụ độc tố.
+        let products = [];
+        let productContext = "";
 
-LUẬT PHẢN HỒI:
-- Nếu phát hiện cặp kỵ nhau: Phải cảnh báo ngay đầu câu trả lời bằng cụm từ "⚠️ CẢNH BÁO AN TOÀN".
-- Luôn đặt sức khỏe của Bếp trưởng (người dùng) lên hàng đầu.
-- Nếu không chắc chắn về một sự kết hợp lạ, hãy khuyên người dùng nên thử một lượng nhỏ hoặc tham khảo ý kiến chuyên gia y tế.
+        if (PRODUCT_INTENTS.includes(intent?.intent)) {
+            console.log("[PRODUCT] Query product database...");
+            console.log("[PRODUCT] Keyword:", intent.keyword);
+            console.log("[PRODUCT] Region:", intent.region);
+            console.log("[PRODUCT] Location:", intent.location);
+
+            products = await searchProducts({
+                keyword: intent.keyword,
+                region: intent.region,
+                location: intent.location,
+                limit: 5,
+            });
+
+            console.log("[PRODUCT] Found:", products.length);
+
+            if (products.length > 0) {
+                console.log(
+                    "[PRODUCT] Products:",
+                    products.map((product) => ({
+                        id: product._id,
+                        name: product.name,
+                        type: product.type,
+                        price: product.price,
+                        stock: product.stock,
+                        region: product.region,
+                        origin: product.origin,
+                        images: product.images,
+                        slug: product.slug,
+                    }))
+                );
+            }
+
+            productContext = `
+DỮ LIỆU SẢN PHẨM TỪ DATABASE:
+
+${JSON.stringify(products, null, 2)}
+
+INTENT CỦA KHÁCH:
+${intent.intent}
+
+TỪ KHÓA:
+${intent.keyword || "(không có)"}
+
+VÙNG MIỀN:
+${intent.region || "(không có)"}
+
+ĐỊA ĐIỂM:
+${intent.location || "(không có)"}
+
+QUY TẮC:
+- Chỉ sử dụng dữ liệu sản phẩm ở trên.
+- Không tự bịa thông tin.
+- Nếu intent là PRODUCT_PRICE, tập trung vào giá và đơn vị.
+- Nếu intent là PRODUCT_STOCK, tập trung vào tồn kho.
+- Nếu intent là PRODUCT_DETAIL, trả lời thông tin chi tiết phù hợp.
+- Nếu intent là PRODUCT_SEARCH, liệt kê sản phẩm phù hợp.
+- Nếu khách hỏi giá của nhiều sản phẩm, hiển thị tên + giá + đơn vị.
+- Nếu danh sách rỗng, nói rằng không tìm thấy sản phẩm phù hợp.
 `;
+        }
+
+        const messages = history
+            .filter(
+                (msg) =>
+                    msg?.parts?.[0]?.text &&
+                    (msg.role === "user" || msg.role === "model")
+            )
+            .map((msg) => ({
+                role: msg.role === "model" ? "assistant" : "user",
+                content: msg.parts[0].text,
+            }));
+
+        messages.push({
+            role: "user",
+            content: userMessage,
+        });
 
         const chatCompletion = await groq.chat.completions.create({
             messages: [
-                { role: "system", content: SYSTEM_INSTRUCTION },
-                ...messages
+                {
+                    role: "system",
+                    content: SYSTEM_INSTRUCTION,
+                },
+                ...(productContext
+                    ? [
+                          {
+                              role: "system",
+                              content: productContext,
+                          },
+                      ]
+                    : []),
+                ...messages,
             ],
             model: "llama-3.3-70b-versatile",
-            temperature: 0.5, 
+            temperature: 0.3,
         });
 
-        const reply = chatCompletion.choices[0]?.message?.content || "";
-        res.status(200).json({ reply });
+        const reply =
+            chatCompletion.choices[0]?.message?.content || "";
 
+        console.log("[CHATBOT] Reply:", reply);
+        console.log("========== CHATBOT END ==========\n");
+
+        return res.status(200).json({
+            reply,
+            intent: intent?.intent || CHATBOT_INTENTS.GENERAL,
+            products: products.map((product) => ({
+                _id: product._id,
+                type: product.type,
+                name: product.name,
+                slug: product.slug,
+                price: product.price,
+                unit: product.unit,
+                images: product.images,
+                stock: product.stock,
+                salePercent: product.salePercent,
+                region: product.region,
+                origin: product.origin,
+                description: product.description,
+            })),
+        });
     } catch (error) {
-        console.error("Groq Chat Error:", error.message);
-        res.status(500).json({ 
-            error: "Lỗi kết nối AI (Groq)", 
-            details: error.message 
+        console.error("Groq Chat Error:", error);
+
+        return res.status(500).json({
+            error: "Lỗi kết nối AI (Groq)",
+            details: error.message,
         });
     }
 };
