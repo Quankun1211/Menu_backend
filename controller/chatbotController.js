@@ -27,6 +27,16 @@ PHONG CÁCH:
 - Trả lời bằng tiếng Việt.
 - Không tự bịa thông tin.
 
+QUY TẮC TRÌNH BÀY (QUAN TRỌNG):
+- Có câu chào lịch sự, thân thiện, ngắn gọn. VD: Chào bạn, bên mình có...
+- Tuyệt đối KHÔNG sử dụng bảng Markdown (bảng có dấu gạch đứng |) trong câu trả lời vì giao diện khung chat không hỗ trợ tốt.
+- Khi liệt kê nhiều sản phẩm, hãy trình bày dạng danh sách gạch đầu dòng hoặc viết đoạn văn ngắn gọn, rõ ràng.
+- Giữ câu trả lời ngắn gọn, súc tích, không rườm rà.
+- Tuyệt đối KHÔNG dùng bảng Markdown, không dùng các ký tự như ** hay * để dẫn đầu dòng.
+- Liệt kê siêu ngắn gọn, mỗi sản phẩm đúng 1 dòng duy nhất theo mẫu:
+  • Tên sản phẩm (Đơn vị) - Còn: [Số lượng]
+- Không lặp lại các từ ngữ rườm rà hay in đậm quá nhiều ký tự.
+
 QUY TẮC SẢN PHẨM:
 - Khi được cung cấp dữ liệu sản phẩm từ DATABASE, chỉ sử dụng dữ liệu đó.
 - Không tự bịa giá, tồn kho, nguồn gốc hoặc sản phẩm.
@@ -168,7 +178,7 @@ QUY TẮC:
                     : []),
                 ...messages,
             ],
-            model: "llama-3.3-70b-versatile",
+            model: "openai/gpt-oss-120b",
             temperature: 0.3,
         });
 
