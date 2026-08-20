@@ -7,3 +7,4 @@ config/serviceAccountKey.json
 
 .github
 .data-reset-backups/
+service_account.json

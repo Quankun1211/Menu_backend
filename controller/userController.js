@@ -60,3 +60,23 @@ export const getMe = async (req, res) => {
         res.status(500).json({ message: "Lỗi máy chủ nội bộ" });
     }
 };
+
+export const updatePushToken = async (req, res, next) => {
+  try {
+    const { pushToken } = req.body;
+    const userId = req.user._id; 
+
+    if (!pushToken) {
+      return res.status(400).json({ success: false, message: "Thiếu pushToken" });
+    }
+
+    await User.findByIdAndUpdate(userId, { pushToken });
+
+    res.status(200).json({
+      success: true,
+      message: "Cập nhật push token thành công",
+    });
+  } catch (error) {
+    next(error);
+  }
+};

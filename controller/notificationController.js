@@ -1,4 +1,6 @@
 import { Notification } from "../models/notification/notificationSchema.js";
+import { User } from "../models/userModel.js"
+import admin from "firebase-admin";
 
 export const getNotification = async (req, res) => {
   try {
@@ -101,9 +103,37 @@ export const sendInternalNotification = async (userId, title, body, metadata = {
       console.log("[SOCKET_DEBUG] Không tìm thấy instance IO");
     }
 
+    if (userId) {
+      const user = await User.findById(userId).select("pushToken")
+
+      if (user && user.pushToken) {
+        const stringifiedMetadata = Object.fromEntries(
+          Object.entries(metadata || {}).map(([key, value]) => [key, String(value)])
+        )
+
+        const fcmMessage = {
+          token: user.pushToken,
+          notification: {
+            title,
+            body,
+            ...(image ? { imageUrl: image } : {})
+          },
+          data: {
+            ...stringifiedMetadata,
+            notificationId: newNotification._id.toString()
+          }
+        }
+
+        admin.messaging().send(fcmMessage)
+          .then((res) => console.log("Đẩy thông báo thành công: ", res))
+          .catch((err) => console.error("Lỗi khi đẩy thông báo: ", err.message))
+      }
+    }
+
     return newNotification;
   } catch (error) {
     console.error("Lỗi sendInternalNotification:", error);
+    throw error;
   }
 };
 

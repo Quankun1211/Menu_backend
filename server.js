@@ -62,6 +62,9 @@ import {
 import { connectRedis, redisClient } from "./config/redis.js"
 import crypto from "crypto"
 
+import { initializeApp, getApps } from "firebase-admin/app";
+import { cert } from "firebase-admin/app";
+
 const app = express()
 
 app.disable("x-powered-by")
@@ -270,6 +273,26 @@ app.get("/", (req, res) => {
     message: "Api is running",
   })
 })
+
+const serviceAccount = 
+  process.env.FIREBASE_PROJECT_ID && 
+  process.env.FIREBASE_CLIENT_EMAIL && 
+  process.env.FIREBASE_PRIVATE_KEY
+    ? {
+        projectId: process.env.FIREBASE_PROJECT_ID,
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+        privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n"),
+      }
+    : null;
+
+if (serviceAccount && getApps().length === 0) {
+  initializeApp({
+    credential: cert(serviceAccount),
+  });
+  console.log("🔥 Firebase Admin initialized successfully!");
+} else if (!serviceAccount) {
+  console.warn("⚠️ Firebase service account credentials missing.");
+}
 
 app.get("/sitemap.xml", dynamicSitemap)
 
