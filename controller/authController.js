@@ -1,6 +1,7 @@
 import { User } from "../models/userModel.js";
 import bcryptjs from "bcryptjs"
 import {sendOTPEmail} from "../utils/mailer.js"
+import { logger } from "../utils/logger.js";
 import { triggerAIUpdate } from "../utils/trackingUserBehavior.js";
 import { Notification } from "../models/notification/notificationSchema.js"
 import { redisClient } from "../config/redis.js";
@@ -224,13 +225,33 @@ export const signUp = async (req, res) => {
 
     try {
       await sendOTPEmail(email, otp);
-      await redisClient.set(`otp:${email}`, otp, { EX: 600 });
     } catch (mailError) {
+      logger.error("signup_otp_email_stage_failed", {
+        userId: String(newUser._id),
+        code: mailError?.code,
+      });
       await Promise.allSettled([
         redisClient.del(`otp:${email}`),
         User.deleteOne({ _id: newUser._id, isVerified: false }),
       ]);
       throw mailError;
+    }
+
+    try {
+      await redisClient.set(`otp:${email}`, otp, { EX: 600 });
+      logger.info("signup_otp_redis_store_succeeded", { userId: String(newUser._id) });
+    } catch (redisError) {
+      logger.error("signup_otp_redis_store_failed", {
+        userId: String(newUser._id),
+        errorName: redisError?.name,
+        errorCode: redisError?.code,
+        errorMessage: redisError?.message,
+      });
+      await Promise.allSettled([
+        redisClient.del(`otp:${email}`),
+        User.deleteOne({ _id: newUser._id, isVerified: false }),
+      ]);
+      throw redisError;
     }
 
     Notification.create({

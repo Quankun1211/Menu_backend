@@ -12,9 +12,12 @@ RUN npm ci --omit=dev
 
 # Chép toàn bộ mã nguồn
 COPY . .
+RUN chmod +x docker-entrypoint.sh
 
 # Mở cổng (Dựa theo Express của bạn)
 EXPOSE 5000
+
+ENTRYPOINT ["./docker-entrypoint.sh"]
 
 # Sử dụng lệnh start chính thức: node server.js
 CMD ["npm", "start"]

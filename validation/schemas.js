@@ -187,7 +187,7 @@ export const adminUserSchema = Joi.object({
   email: Joi.string().trim().lowercase().email().required(),
   password: Joi.string().min(8).max(128).required(),
   phone: Joi.string().pattern(/^(?:\+84|0)\d{9,10}$/),
-  role: Joi.string().valid("admin", "shipper", "super_admin").required(),
+  role: Joi.string().valid("user", "admin", "shipper", "super_admin").required(),
 });
 export const adminUserUpdateSchema = adminUserSchema
   .fork(["name", "username", "email", "password", "role"], (schema) => schema.optional())

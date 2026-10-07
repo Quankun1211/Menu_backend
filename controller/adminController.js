@@ -55,7 +55,7 @@ export const registerUser = async (req, res) => {
 
     const actorRole = req.user.role;
     const validRoles = actorRole === "super_admin"
-      ? ["admin", "shipper", "super_admin"]
+      ? ["user", "admin", "shipper", "super_admin"]
       : ["shipper"];
 
     if (!validRoles.includes(role)) {
@@ -99,7 +99,8 @@ export const registerUser = async (req, res) => {
       password: hashedPassword,
       phone,
       role,
-      isVerified: role !== "admin" ? false : true,
+      // Accounts created by an administrator do not go through the public OTP flow.
+      isVerified: true,
       isActive: true
     });
 
@@ -126,7 +127,7 @@ export const registerUser = async (req, res) => {
 export const updateUser = async (req, res) => {
     try {
         const { id } = req.params;
-        const { name, username, email, password, role } = req.body;
+        const { name, username, email, password, phone, role } = req.body;
         const actorRole = req.user.role;
 
         const user = await User.findById(id);
@@ -174,6 +175,7 @@ export const updateUser = async (req, res) => {
         user.name = name || user.name;
         user.username = username || user.username;
         user.email = email || user.email;
+        if (phone !== undefined) user.phone = phone;
         user.role = role || user.role;
 
         await user.save();
@@ -265,11 +267,11 @@ export const getAdminAndShippers = async (req, res) => {
         if (req.user.role === "admin") {
             query = { role: "shipper"};
         } else {
-            query = { role: { $in: ["admin", "shipper"] }};
+            query = { role: { $in: ["admin", "shipper", "user"] }};
         }
 
         if (role && role !== "all") {
-            if (req.user.role === "super_admin") {
+            if (req.user.role === "super_admin" && ["admin", "shipper", "user"].includes(role)) {
                 query.role = role;
             } else if (role === "shipper") {
                 query.role = "shipper";
