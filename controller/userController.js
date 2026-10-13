@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
 import { User } from "../models/userModel.js";
 import { triggerAIUpdate } from "../utils/trackingUserBehavior.js";
+import bcryptjs from "bcryptjs";
 
 export const trackViewCategory = async (userId, categoryId) => {
   const cooldown = 30 * 60 * 1000 
@@ -46,6 +47,7 @@ export const getMe = async (req, res) => {
                 name: user.name,
                 username: user.username,
                 email: user.emailNeedsVerification ? null : user.email,
+                phone: user.phone || null,
                 emailNeedsVerification: Boolean(user.emailNeedsVerification),
                 role: user.role,
                 createdAt: user.createdAt,
@@ -59,6 +61,21 @@ export const getMe = async (req, res) => {
         console.error("Lỗi trong hàm getMe:", error.message);
         res.status(500).json({ message: "Lỗi máy chủ nội bộ" });
     }
+};
+
+export const changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    const user = await User.findById(req.user._id).select("+password");
+    if (!user?.password || !(await bcryptjs.compare(currentPassword, user.password))) {
+      return res.status(400).json({ success: false, message: "Mật khẩu hiện tại không chính xác" });
+    }
+    user.password = await bcryptjs.hash(newPassword, 10);
+    await user.save();
+    return res.status(200).json({ success: true, message: "Đổi mật khẩu thành công" });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: "Không thể đổi mật khẩu lúc này" });
+  }
 };
 
 export const updatePushToken = async (req, res, next) => {

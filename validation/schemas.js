@@ -70,6 +70,12 @@ export const resetPasswordSchema = Joi.object({
   otp: Joi.string().pattern(/^\d{6}$/).required(),
   newPassword: Joi.string().min(8).max(128).required(),
 });
+export const changePasswordSchema = Joi.object({
+  currentPassword: Joi.string().min(6).max(128).required(),
+  newPassword: Joi.string().min(8).max(128).required(),
+}).custom((value, helpers) => value.currentPassword === value.newPassword
+  ? helpers.error("any.invalid")
+  : value, "passwords must differ");
 export const refreshSchema = Joi.object({
   token: Joi.string().max(5000),
   clientType: Joi.string().valid("web", "mobile", "spa"),
