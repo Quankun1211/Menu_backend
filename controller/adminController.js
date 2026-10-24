@@ -1349,8 +1349,24 @@ export const updateProductAdmin = async (req, res) => {
       updateData.season = JSON.parse(req.body.season);
     }
 
-    if (req.body.name) {
-      updateData.slug = slugify(req.body.name, { lower: true, strict: true });
+    const nextName = typeof req.body.name === "string" ? req.body.name.trim() : "";
+    if (nextName && nextName !== currentProduct.name) {
+      const nextSlug = slugify(nextName, { lower: true, strict: true });
+      const conflictingProduct = await Product.findOne({
+        slug: nextSlug,
+        _id: { $ne: currentProduct._id },
+      }).select("_id").lean();
+
+      if (conflictingProduct) {
+        return res.status(409).json({
+          success: false,
+          code: "PRODUCT_SLUG_CONFLICT",
+          message: "Tên sản phẩm đã được sử dụng. Hãy chọn tên khác.",
+        });
+      }
+
+      updateData.name = nextName;
+      updateData.slug = nextSlug;
     }
 
     if (req.file) {
@@ -1366,7 +1382,7 @@ export const updateProductAdmin = async (req, res) => {
     const updatedProduct = await Product.findByIdAndUpdate(
       id,
       { $set: updateData },
-      { new: true, runValidators: true }
+      { returnDocument: "after", runValidators: true }
     );
 
     await clearCache("products:*");
@@ -1378,6 +1394,13 @@ export const updateProductAdmin = async (req, res) => {
     });
   } catch (error) {
     console.error("Update Product Error:", error);
+    if (error.code === 11000 && error.keyPattern?.slug) {
+      return res.status(409).json({
+        success: false,
+        code: "PRODUCT_SLUG_CONFLICT",
+        message: "Tên sản phẩm đã được sử dụng. Hãy chọn tên khác.",
+      });
+    }
     return res.status(500).json({ success: false, message: "Lỗi server khi cập nhật" });
   }
 };
