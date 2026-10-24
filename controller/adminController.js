@@ -18,8 +18,9 @@ import fs from 'fs';
 
 import { clearCache } from "../utils/redis.utils.js";
 import { emitOrderUpdated } from "../utils/orderRealtime.js";
-import { createDeliveryOtp } from "../utils/deliveryVerification.js";
-import { sendInternalNotification } from "./notificationController.js";
+import { serializeOrder } from "../utils/orderSerialization.js";
+import { reserveShipperAssignmentCapacity } from "../services/shipperAssignmentCapacity.js";
+import { logger } from "../utils/logger.js";
 
 const clearCategoryCaches = (type) => {
   const patternsByType = {
@@ -197,6 +198,7 @@ export const updateUser = async (req, res) => {
 };
 
 export const getAllOrders = async (req, res) => {
+    let stage = "parse_query";
     try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
@@ -205,7 +207,9 @@ export const getAllOrders = async (req, res) => {
 
         const filter = status && status !== 'all' ? { status } : {};
 
+        stage = "query_orders";
         const orders = await Order.find(filter)
+            .select("-currentPaymentRef -paymentRequestDate -paymentCheckAttempts -inventoryReleasedAt -soldCountCommitted -checkoutSessionId")
             .populate('userId', 'name')
             .populate('address', 'name phone address')
             .populate('shipperId', 'name phone')
@@ -213,6 +217,7 @@ export const getAllOrders = async (req, res) => {
             .skip(skip)
             .limit(limit);
 
+        stage = "query_order_items";
         const orderItems = await OrderItem.find({
             orderId: { $in: orders.map((order) => order._id) },
         }).lean();
@@ -223,8 +228,9 @@ export const getAllOrders = async (req, res) => {
             return grouped;
         }, {});
 
+        stage = "serialize_orders";
         const ordersData = orders.map(order => {
-            const orderObj = order.toObject();
+            const orderObj = serializeOrder(order);
             return {
                 ...orderObj,
                 items: itemsByOrder[order._id.toString()] || [],
@@ -239,6 +245,7 @@ export const getAllOrders = async (req, res) => {
             };
         });
 
+        stage = "count_orders";
         const totalOrders = await Order.countDocuments(filter);
 
         res.status(200).json({
@@ -252,7 +259,19 @@ export const getAllOrders = async (req, res) => {
             }
         });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        logger.error("admin_orders_list_failed", {
+            requestId: req.requestId,
+            stage,
+            errorName: error.name,
+            errorCode: error.code,
+            errorMessage: error.message,
+            stack: error.stack,
+        });
+        res.status(500).json({
+            success: false,
+            message: "Không thể tải danh sách đơn hàng",
+            requestId: req.requestId,
+        });
     }
 };
 
@@ -439,107 +458,96 @@ export const assignOrderToShipper = async (req, res) => {
         const maxActiveOrders = Math.max(Number(process.env.SHIPPER_MAX_ACTIVE_ORDERS) || 5, 1);
         const assignmentTimeoutMinutes = Math.max(Number(process.env.SHIPPER_ASSIGNMENT_TIMEOUT_MINUTES) || 10, 1);
 
-        const shipper = await User.findOne({
-            _id: shipperId,
-            role: "shipper",
-            isActive: true,
-            isOnline: true
-        });
-        if (!shipper) {
-            return res.status(409).json({
-                success: false,
-                code: "SHIPPER_UNAVAILABLE",
-                message: "Shipper đang ngoại tuyến hoặc không còn sẵn sàng nhận đơn."
-            });
-        }
+        const session = await mongoose.startSession();
+        let shipper;
+        let assignedOrder;
+        try {
+            await session.withTransaction(async () => {
+                shipper = await User.findOne({ _id: shipperId, role: "shipper", isActive: true, isOnline: true }).session(session);
+                if (!shipper) {
+                    const error = new Error("Shipper đang ngoại tuyến hoặc không còn sẵn sàng nhận đơn");
+                    error.statusCode = 409;
+                    error.code = "SHIPPER_UNAVAILABLE";
+                    throw error;
+                }
+                await reserveShipperAssignmentCapacity({ shipperId, maxActiveOrders, session });
 
-        const activeOrders = await Order.countDocuments({
-            shipperId,
-            status: { $in: ["assigned", "confirmed", "processing", "shipping", "pending_cancel"] },
-        });
-        if (activeOrders >= maxActiveOrders) {
-            return res.status(409).json({
-                success: false,
-                code: "SHIPPER_CAPACITY_REACHED",
-                message: `Shipper đã đạt giới hạn ${maxActiveOrders} đơn đang xử lý.`,
-            });
-        }
+                const order = await Order.findById(orderId).session(session);
+                if (!order) {
+                    const error = new Error("Đơn hàng không tồn tại");
+                    error.statusCode = 404;
+                    throw error;
+                }
+                if (order.status !== "pending") {
+                    const error = new Error(`Không thể phân công đơn hàng đang ở trạng thái: ${order.status}`);
+                    error.statusCode = 409;
+                    throw error;
+                }
+                if (order.paymentMethod !== "cod" && order.paymentStatus !== "paid") {
+                    const error = new Error("Đơn thanh toán online chưa được xác nhận nên chưa thể phân công giao hàng");
+                    error.statusCode = 409;
+                    error.code = "PAYMENT_NOT_CONFIRMED";
+                    throw error;
+                }
 
-        const order = await Order.findById(orderId);
-        if (!order) {
-            return res.status(404).json({
-                success: false,
-                message: "Đơn hàng không tồn tại."
+                const assignedAt = new Date();
+                assignedOrder = await Order.findOneAndUpdate(
+                    { _id: orderId, status: "pending" },
+                    {
+                        $set: {
+                            shipperId,
+                            status: "assigned",
+                            assignment: {
+                                ...order.assignment?.toObject?.(),
+                                assignedAt,
+                                expiresAt: new Date(assignedAt.getTime() + assignmentTimeoutMinutes * 60 * 1000),
+                            },
+                        },
+                        $push: {
+                            statusHistory: { $each: [{
+                                status: "assigned",
+                                at: assignedAt,
+                                actorId: req.user._id,
+                                actorRole: req.user.role,
+                                note: `Phân công cho shipper ${shipper.name}`,
+                            }], $slice: -100 },
+                        },
+                    },
+                    { new: true, session },
+                );
+                if (!assignedOrder) {
+                    const error = new Error("Đơn hàng vừa được cập nhật, vui lòng tải lại");
+                    error.statusCode = 409;
+                    throw error;
+                }
             });
+        } finally {
+            await session.endSession();
         }
-
-        if (order.status !== "pending") {
-            return res.status(400).json({
-                success: false,
-                message: `Không thể phân công đơn hàng đang ở trạng thái: ${order.status}`
-            });
-        }
-        if (order.paymentMethod !== "cod" && order.paymentStatus !== "paid") {
-            return res.status(409).json({
-                success: false,
-                code: "PAYMENT_NOT_CONFIRMED",
-                message: "Đơn thanh toán online chưa được xác nhận nên chưa thể phân công giao hàng.",
-            });
-        }
-
-        order.shipperId = shipperId;
-        order.status = "assigned";
-        const deliveryOtp = createDeliveryOtp();
-        order.deliveryVerification = {
-            otpHash: deliveryOtp.otpHash,
-            otpExpiresAt: deliveryOtp.otpExpiresAt,
-        };
-        order.assignment = {
-            ...order.assignment?.toObject?.(),
-            assignedAt: new Date(),
-            expiresAt: new Date(Date.now() + assignmentTimeoutMinutes * 60 * 1000),
-        };
-        order.$locals.statusActor = {
-            actorId: req.user._id,
-            actorRole: req.user.role,
-            note: `Phân công cho shipper ${shipper.name}`,
-        };
-        
-        await order.save();
-        await sendInternalNotification(
-            order.userId,
-            "Mã xác nhận giao hàng",
-            `Mã nhận hàng của đơn #${String(order._id).slice(-6).toUpperCase()} là ${deliveryOtp.code}. Chỉ cung cấp mã sau khi đã nhận đủ hàng.`,
-            { orderId: order._id, type: "delivery_otp" },
-            null,
-            req.app.get("io"),
-        );
-
        const io = req.app.get('io');
         if (io) {
             const targetRoom = shipperId.toString();
             const socketsInRoom = io.sockets.adapter.rooms.get(targetRoom);
             io.to(targetRoom).emit('new_order_assigned', {
-                orderId: order._id,
+                orderId: assignedOrder._id,
                 message: "Bạn có đơn hàng mới được phân công"
             });
-            emitOrderUpdated(io, order, { assigned: true });
+            emitOrderUpdated(io, assignedOrder, { assigned: true });
         } else {
             console.log("[DEBUG] IO instance not found");
         }
-        order.deliveryVerification.otpHash = undefined;
 
         res.status(200).json({
             success: true,
             message: "Phân công đơn hàng thành công",
-            data: order
+            data: serializeOrder(assignedOrder)
         });
 
     } catch (error) {
-        res.status(500).json({
+        res.status(error.statusCode || 500).json({
             success: false,
-            message: "Lỗi hệ thống khi phân công đơn hàng",
-            error: error.message
+            ...(error.code && { code: error.code }),
+            message: error.statusCode ? error.message : "Lỗi hệ thống khi phân công đơn hàng",
         });
     }
 };
@@ -572,62 +580,81 @@ export const reassignOrderToShipper = async (req, res) => {
         if (order.shipperId?.equals(shipper._id)) {
             return res.status(400).json({ success: false, message: "Đơn hàng đã thuộc shipper này." });
         }
-        const activeOrders = await Order.countDocuments({
-            shipperId,
-            status: { $in: ["assigned", "confirmed", "processing", "shipping", "pending_cancel"] },
-        });
-        if (activeOrders >= maxActiveOrders) {
-            return res.status(409).json({
-                success: false,
-                code: "SHIPPER_CAPACITY_REACHED",
-                message: "Shipper mới đã đạt giới hạn đơn đang xử lý.",
+        let previousShipperId;
+        let reassignedOrder;
+        const session = await mongoose.startSession();
+        try {
+            await session.withTransaction(async () => {
+                const currentShipper = await User.findOne({ _id: shipperId, role: "shipper", isActive: true, isOnline: true }).session(session);
+                if (!currentShipper) {
+                    const error = new Error("Shipper mới đang ngoại tuyến hoặc không sẵn sàng");
+                    error.statusCode = 409;
+                    error.code = "SHIPPER_UNAVAILABLE";
+                    throw error;
+                }
+                await reserveShipperAssignmentCapacity({ shipperId, maxActiveOrders, session });
+                const currentOrder = await Order.findById(orderId).session(session);
+                if (!currentOrder || !["assigned", "confirmed", "pending_cancel"].includes(currentOrder.status)) {
+                    const error = new Error("Đơn hàng vừa thay đổi hoặc đã bắt đầu giao");
+                    error.statusCode = 409;
+                    throw error;
+                }
+                if (currentOrder.shipperId?.equals(currentShipper._id)) {
+                    const error = new Error("Đơn hàng đã thuộc shipper này");
+                    error.statusCode = 409;
+                    throw error;
+                }
+
+                previousShipperId = currentOrder.shipperId;
+                const reassignedAt = new Date();
+                reassignedOrder = await Order.findOneAndUpdate(
+                    { _id: orderId, shipperId: previousShipperId, status: { $in: ["assigned", "confirmed", "pending_cancel"] } },
+                    {
+                        $set: {
+                            shipperId: currentShipper._id,
+                            status: "assigned",
+                            assignment: {
+                                assignedAt: reassignedAt,
+                                expiresAt: new Date(reassignedAt.getTime() + assignmentTimeoutMinutes * 60 * 1000),
+                                reassignedAt,
+                                previousShipperId,
+                                reassignmentReason: reason,
+                            },
+                        },
+                        $unset: { cancelRequest: 1 },
+                        $push: {
+                            statusHistory: { $each: [{
+                                status: "assigned",
+                                at: reassignedAt,
+                                actorId: req.user._id,
+                                actorRole: req.user.role,
+                                note: `Đổi shipper: ${reason}`,
+                            }], $slice: -100 },
+                        },
+                    },
+                    { new: true, session },
+                );
+                if (!reassignedOrder) {
+                    const error = new Error("Đơn hàng vừa được cập nhật, vui lòng tải lại");
+                    error.statusCode = 409;
+                    throw error;
+                }
             });
+        } finally {
+            await session.endSession();
         }
-
-        const previousShipperId = order.shipperId;
-        order.shipperId = shipper._id;
-        order.status = "assigned";
-        const deliveryOtp = createDeliveryOtp();
-        order.deliveryVerification = {
-            otpHash: deliveryOtp.otpHash,
-            otpExpiresAt: deliveryOtp.otpExpiresAt,
-        };
-        order.cancelRequest = undefined;
-        order.assignment = {
-            assignedAt: new Date(),
-            expiresAt: new Date(Date.now() + assignmentTimeoutMinutes * 60 * 1000),
-            reassignedAt: new Date(),
-            previousShipperId,
-            reassignmentReason: reason,
-        };
-        order.$locals.statusActor = {
-            actorId: req.user._id,
-            actorRole: req.user.role,
-            note: `Đổi shipper: ${reason}`,
-        };
-        await order.save();
-        await sendInternalNotification(
-            order.userId,
-            "Mã xác nhận giao hàng mới",
-            `Mã nhận hàng mới của đơn #${String(order._id).slice(-6).toUpperCase()} là ${deliveryOtp.code}.`,
-            { orderId: order._id, type: "delivery_otp" },
-            null,
-            req.app.get("io"),
-        );
-
         const io = req.app.get("io");
         if (previousShipperId) {
-            io?.to(previousShipperId.toString()).emit("order_unassigned", { orderId: order._id });
+            io?.to(previousShipperId.toString()).emit("order_unassigned", { orderId: reassignedOrder._id });
         }
         io?.to(shipper._id.toString()).emit("new_order_assigned", {
-            orderId: order._id,
+            orderId: reassignedOrder._id,
             message: "Bạn có đơn hàng mới được phân công",
         });
-        emitOrderUpdated(io, order, { reassigned: true });
-        order.deliveryVerification.otpHash = undefined;
-        return res.status(200).json({ success: true, message: "Đổi shipper thành công", data: order });
+        emitOrderUpdated(io, reassignedOrder, { reassigned: true });
+        return res.status(200).json({ success: true, message: "Đổi shipper thành công", data: serializeOrder(reassignedOrder) });
     } catch (error) {
-        return res.status(500).json({ success: false, message: error.message });
+        return res.status(error.statusCode || 500).json({ success: false, ...(error.code && { code: error.code }), message: error.statusCode ? error.message : "Không thể đổi shipper lúc này" });
     }
 };
 

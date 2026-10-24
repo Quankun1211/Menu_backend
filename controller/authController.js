@@ -410,8 +410,8 @@ export const resetPassword = async (req, res) => {
       return res.status(404).json({ error: "Người dùng không tồn tại" });
     }
 
-    if (newPassword.length < 6) {
-      return res.status(400).json({ error: "Mật khẩu mới phải có ít nhất 6 ký tự" });
+    if (newPassword.length < 8) {
+      return res.status(400).json({ error: "Mật khẩu mới phải có ít nhất 8 ký tự" });
     }
 
     const salt = await bcryptjs.genSalt(10);
@@ -494,7 +494,7 @@ export const logout = async (req, res) => {
         // vào socket hay phiên đăng nhập. Chỉ endpoint availability được phép đổi nó.
         const cookieSecurity = cookieSecurityOptions();
         res.clearCookie("jwt", cookieSecurity);
-        res.clearCookie("refresh_token", { ...cookieSecurity, path: "/api/auth" });
+        res.clearCookie("refresh_token", { ...cookieSecurity, path: "/api/v1/auth" });
         res.clearCookie("csrf_token", { ...cookieSecurity, path: "/" });
         console.log("Logout ok");
         res.status(200).json({ 

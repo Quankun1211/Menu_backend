@@ -450,18 +450,22 @@ export const retryFailedRefunds = async (io = null, specificOrderId = null, acto
     }
     if (!specificOrderId && transaction.nextRefundRetryAt && transaction.nextRefundRetryAt > new Date()) continue;
 
+    const claimedOrder = await Order.findOneAndUpdate(
+      { _id: order._id, refundStatus: "failed", paymentStatus: "paid" },
+      { $set: { refundStatus: "processing", refundRequestedAt: new Date() } },
+      { new: true },
+    );
+    if (!claimedOrder) continue;
+
     try {
-      order.refundStatus = "processing";
-      order.refundRequestedAt = new Date();
-      await order.save();
       const response = await refundOrderLogic({
-        orderId: order._id,
-        paymentRef: order.currentPaymentRef,
-        amount: order.totalPrice,
+        orderId: claimedOrder._id,
+        paymentRef: claimedOrder.currentPaymentRef,
+        amount: claimedOrder.totalPrice,
         transactionDate:
           transaction.gatewayDetails?.rawPayDate ||
-          order.paidAt ||
-          order.createdAt,
+          claimedOrder.paidAt ||
+          claimedOrder.createdAt,
         transactionNo: transaction.gatewayDetails?.transactionId,
         user: actor,
         ipAddress,
@@ -470,7 +474,7 @@ export const retryFailedRefunds = async (io = null, specificOrderId = null, acto
         throw new Error(`VNPay từ chối hoàn tiền: ${response?.vnp_ResponseCode || "unknown"}`);
       }
       await Promise.all([
-        Order.updateOne({ _id: order._id }, { refundStatus: "gateway_completed" }),
+        Order.updateOne({ _id: claimedOrder._id, refundStatus: "processing" }, { refundStatus: "gateway_completed" }),
         Transaction.updateOne(
           { _id: transaction._id },
           {
@@ -488,7 +492,7 @@ export const retryFailedRefunds = async (io = null, specificOrderId = null, acto
       const retryCount = transaction.refundRetryCount + 1;
       const delayMinutes = Math.min(2 ** retryCount * 5, 24 * 60);
       await Promise.all([
-        Order.updateOne({ _id: order._id }, { refundStatus: "failed" }),
+        Order.updateOne({ _id: claimedOrder._id, refundStatus: "processing" }, { refundStatus: "failed" }),
         Transaction.updateOne(
           { _id: transaction._id },
           {

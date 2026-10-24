@@ -160,6 +160,7 @@ const orderSchema = new mongoose.Schema({
 orderSchema.index({ userId: 1, status: 1, createdAt: -1 });
 orderSchema.index({ shipperId: 1, status: 1, updatedAt: -1 });
 orderSchema.index({ status: 1, createdAt: -1 });
+orderSchema.index({ createdAt: -1 });
 orderSchema.index({ status: 1, "assignment.expiresAt": 1 });
 orderSchema.index({
     paymentMethod: 1,
@@ -171,6 +172,7 @@ orderSchema.index(
     { userId: 1, checkoutSessionId: 1 },
     { unique: true, partialFilterExpression: { checkoutSessionId: { $type: "string" } } }
 );
+orderSchema.index({ paymentMethod: 1, paymentStatus: 1, refundStatus: 1 });
 
 orderSchema.pre("save", function appendStatusHistory() {
     if (!this.isModified("status")) return;
@@ -184,6 +186,7 @@ orderSchema.pre("save", function appendStatusHistory() {
         actorRole: actor.actorRole || "system",
         note: actor.note,
     });
+    if (this.statusHistory.length > 100) this.statusHistory = this.statusHistory.slice(-100);
 });
 
 export const Order = mongoose.model("Order", orderSchema)

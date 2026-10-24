@@ -20,7 +20,7 @@ export const paginationQuery = Joi.object({
   search: Joi.string().trim().max(200).allow(""),
   q: Joi.string().trim().max(200).allow(""),
   sort: Joi.string().valid("newest", "oldest", "price_asc", "price_desc", "popular", "sold_desc"),
-  status: Joi.string().trim().max(50),
+  status: Joi.string().trim().max(100),
   role: Joi.string().valid("user", "shipper", "admin", "super_admin"),
   availability: Joi.string().valid("online", "all"),
   orderId: objectId,
@@ -32,7 +32,7 @@ export const paginationQuery = Joi.object({
 }).unknown(true);
 export const loginSchema = Joi.object({
   username: Joi.string().trim().lowercase().min(3).max(254).required(),
-  password: Joi.string().min(6).max(128).required(),
+  password: Joi.string().min(8).max(128).required(),
   clientType: Joi.string().valid("web", "mobile", "spa").default("web"),
 });
 export const socialLoginSchema = Joi.object({
@@ -71,7 +71,7 @@ export const resetPasswordSchema = Joi.object({
   newPassword: Joi.string().min(8).max(128).required(),
 });
 export const changePasswordSchema = Joi.object({
-  currentPassword: Joi.string().min(6).max(128).required(),
+  currentPassword: Joi.string().min(8).max(128).required(),
   newPassword: Joi.string().min(8).max(128).required(),
 }).custom((value, helpers) => value.currentPassword === value.newPassword
   ? helpers.error("any.invalid")
@@ -136,8 +136,6 @@ export const notificationSchema = Joi.object({
 export const shipperStatusSchema = Joi.object({
   orderId: objectId.required(),
   nextStatus: Joi.string().valid("confirmed", "shipping", "delivered").required(),
-  deliveryCode: Joi.string().pattern(/^\d{6}$/),
-  recipientName: shortText,
 });
 export const shipperCancelSchema = Joi.object({
   orderId: objectId.required(),

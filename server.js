@@ -68,7 +68,13 @@ import { cert } from "firebase-admin/app";
 const app = express()
 
 app.disable("x-powered-by")
-app.set("trust proxy", 1)
+const configuredProxyHops = Number(process.env.TRUST_PROXY_HOPS ?? 1)
+app.set(
+  "trust proxy",
+  Number.isInteger(configuredProxyHops) && configuredProxyHops >= 0
+    ? configuredProxyHops
+    : 1,
+)
 
 app.use((req, res, next) => {
   const start = Date.now()
@@ -98,7 +104,7 @@ app.use((req, res, next) => {
 })
 
 app.use(securityHeaders)
-app.use(rateLimit({ max: 180 }))
+app.use(rateLimit({ max: 180, prefix: "api:global" }))
 app.use(requestLogger)
 
 app.use((req, res, next) => {

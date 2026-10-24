@@ -49,6 +49,7 @@ export const readCustomerConversation = async (req, res, next) => {
 export const listConversations = async (req, res, next) => {
   try {
     const conversations = await SupportConversation.find({ messages: { $ne: [] } })
+      .select("customer assignedAdmin status lastMessage lastMessageAt unreadByAdmin unreadByCustomer assignedAt resolvedAt createdAt updatedAt")
       .populate("customer", "name email avatar").populate("assignedAdmin", "name email avatar").sort({ lastMessageAt: -1 });
     const unreadCount = conversations.reduce((total, item) => {
       const status = item.status || "waiting";

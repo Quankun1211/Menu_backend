@@ -63,6 +63,7 @@ import { getShippingFeeValue } from "./configController.js";
 import { startVnpayAttempt } from "../services/startVnpayAttempt.js";
 import { PaymentAttempt } from "../models/paymentAttemptModel.js";
 import { formatVnpayDate, queryVnpayTransaction } from "../utils/vnpayQuery.js";
+import { ORDER_STATUSES } from "../domain/orderStatus.js";
 
 export const createOrder = async (req, res) => {
   const session = await mongoose.startSession();
@@ -702,11 +703,17 @@ export const getMyOrders = async (req, res) => {
     const pageSize = Number(req.query.limit || 10);
     const skip = (currentPage - 1) * pageSize;
     const filter = { userId };
-    if (req.query.status && req.query.status !== "all") filter.status = req.query.status;
+    if (req.query.status && req.query.status !== "all") {
+      const requestedStatuses = String(req.query.status).split(",").filter(Boolean);
+      if (!requestedStatuses.length || requestedStatuses.some((status) => !ORDER_STATUSES.includes(status))) {
+        return res.status(400).json({ success: false, message: "Bộ lọc trạng thái đơn hàng không hợp lệ" });
+      }
+      filter.status = requestedStatuses.length === 1 ? requestedStatuses[0] : { $in: requestedStatuses };
+    }
 
     const [orders, totalItems] = await Promise.all([
       Order.find(filter)
-        .populate("address")
+        .populate("address", "name phone address province district ward latitude longitude")
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(pageSize)
@@ -806,7 +813,7 @@ export const getOrderDetail = async (req, res) => {
     const requesterRole = req.user.role; 
     const { orderId } = req.params;
 
-    const order = await Order.findById(orderId).populate("address");
+    const order = await Order.findById(orderId).populate("address", "name phone address province district ward latitude longitude");
 
     if (!order) {
       return res.status(404).json({

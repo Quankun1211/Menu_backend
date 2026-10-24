@@ -69,7 +69,7 @@ export const issueSession = async (user, res, req, familyId = crypto.randomUUID(
   res.cookie("refresh_token", refreshToken, {
     ...cookieBase,
     maxAge: 7 * 24 * 60 * 60 * 1000,
-    path: "/api/auth",
+    path: "/api/v1/auth",
   });
   const csrfToken = setCsrfToken(res);
   return { accessToken, refreshToken, csrfToken, familyId, jti };

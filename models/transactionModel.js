@@ -49,7 +49,8 @@ const TransactionSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 TransactionSchema.index({ 'gatewayDetails.transactionId': 1 });
-TransactionSchema.index({ status: 1 });
-TransactionSchema.index({ status: 1, nextRefundRetryAt: 1 });
+TransactionSchema.index({ status: 1, createdAt: -1 });
+TransactionSchema.index({ paymentMethod: 1, createdAt: -1 });
+TransactionSchema.index({ paymentMethod: 1, status: 1, createdAt: -1 });
 
 export const Transaction = mongoose.model('Transaction', TransactionSchema);

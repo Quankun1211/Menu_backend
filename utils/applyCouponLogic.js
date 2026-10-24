@@ -1,22 +1,9 @@
 import { Coupons } from "../models/couponsModel.js";
-import { redisClient } from "../config/redis.js";
 export const applyCouponLogic = async ({
     code,
     items,
     totalAmount
   }) => {
-    const lockKey = `lock:coupon:${code.toUpperCase()}`;
-
-    try {
-      const isLocked = await redisClient.set(lockKey, "processing", {
-        NX: true,
-        EX: 5,
-      });
-
-      if (!isLocked) {
-        throw new Error("Mã giảm giá đang được xử lý, vui lòng đợi giây lát");
-      }
-
       if (!code || !items?.length)
         throw new Error("Thiếu dữ liệu áp mã");
 
@@ -51,15 +38,9 @@ export const applyCouponLogic = async ({
 
       discountAmount = Math.min(discountAmount, totalAmount);
 
-      await redisClient.del(lockKey);
-
       return {
         couponCode: coupon.code,
         couponDiscount: discountAmount,
         couponId: coupon._id
       };
-    } catch (error) {
-      await redisClient.del(lockKey);
-      throw error;
-    }
   };

@@ -26,7 +26,7 @@ import {
 
 const router = express.Router();
 
-router.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 20 }));
+router.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 20, prefix: "api:auth" }));
 router.post("/registrations", validate(registerSchema), signUp);
 router.post("/email-verifications", validate(otpSchema), verifyOTP);
 router.post("/email-verification-deliveries", validate(emailSchema), resendOTP);

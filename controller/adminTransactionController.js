@@ -11,6 +11,7 @@ export const getTransactionsAdmin = async (req, res) => {
     }
     const [data, total] = await Promise.all([
       Transaction.find(filter)
+        .select("orderId userId amount currency paymentMethod status description refundRetryCount lastRefundError nextRefundRetryAt createdAt updatedAt")
         .populate("userId", "name email")
         .populate("orderId", "status paymentStatus refundStatus totalPrice")
         .sort({ createdAt: -1 })
@@ -25,6 +26,7 @@ export const getTransactionsAdmin = async (req, res) => {
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     });
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
+    console.error("[admin:transactions]", error);
+    return res.status(500).json({ success: false, message: "Không thể tải danh sách giao dịch" });
   }
 };

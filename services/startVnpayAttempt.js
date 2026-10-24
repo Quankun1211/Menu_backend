@@ -31,6 +31,7 @@ export const startVnpayAttempt = async ({
           _id: order._id,
           paymentStatus: { $in: expectedStatuses },
           inventoryReleasedAt: null,
+          currentPaymentRef: order.currentPaymentRef ?? null,
         },
         {
           status: "pending",
@@ -46,6 +47,12 @@ export const startVnpayAttempt = async ({
         error.statusCode = 409;
         throw error;
       }
+
+      await PaymentAttempt.updateMany(
+        { orderId: order._id, status: "pending" },
+        { $set: { status: "cancelled", responseCode: "superseded_by_new_attempt" } },
+        { session },
+      );
 
       await PaymentAttempt.create([{
         orderId: order._id,

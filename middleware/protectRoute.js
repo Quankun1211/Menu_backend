@@ -1,6 +1,14 @@
 import { User } from "../models/userModel.js";
 import jwt from "jsonwebtoken"
 import { authErrorResponse } from "../config/errorText.js";
+import { distributedRateLimit } from "./security.js";
+
+const userApiRateLimit = distributedRateLimit({
+  windowSeconds: 60,
+  max: 300,
+  prefix: "api:user",
+  keyBy: ["user"],
+});
 
 export const protectRoute = async (req, res, next) => {
   try {
@@ -26,7 +34,7 @@ export const protectRoute = async (req, res, next) => {
     }
 
     req.user = user;
-    next();
+    return userApiRateLimit(req, res, next);
   } catch (err) {
     console.error("Token error:", err.name, err.message);
 

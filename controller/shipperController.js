@@ -5,11 +5,11 @@ import { OrderItem } from "../models/orderItemsModel.js";
 import { Transaction } from "../models/transactionModel.js";
 import { processCustomerOrderReward } from "../services/customerRewardService.js";
 import { emitOrderUpdated } from "../utils/orderRealtime.js";
+import { serializeOrder } from "../utils/orderSerialization.js";
 import {
   canRequestShipperCancellation,
   canShipperTransitionOrder,
 } from "../domain/orderStatus.js";
-import { verifyDeliveryOtp } from "../utils/deliveryVerification.js";
 
 const attachOrderSummaries = async (orders) => {
     if (!orders.length) return orders;
@@ -26,7 +26,7 @@ const attachOrderSummaries = async (orders) => {
         const orderItems = byOrder.get(order._id.toString()) || [];
         const names = orderItems.map((item) => item.productName).filter(Boolean);
         return {
-            ...order,
+            ...serializeOrder(order),
             address: order.deliveryAddress?.address ? order.deliveryAddress : order.address,
             itemCount: orderItems.reduce((sum, item) => sum + item.quantity, 0),
             productSummary: names.length > 2
@@ -181,11 +181,10 @@ export const updateOrderStatus = async (req, res) => {
   session.startTransaction();
 
   try {
-    const { orderId, nextStatus, deliveryCode, recipientName } = req.body;
+    const { orderId, nextStatus } = req.body;
     const shipperId = req.user._id;
 
     const order = await Order.findOne({ _id: orderId, shipperId })
-      .select("+deliveryVerification.otpHash")
       .session(session);
 
     if (!order) {
@@ -217,20 +216,8 @@ export const updateOrderStatus = async (req, res) => {
       order.assignment.acceptedAt = new Date();
       order.assignment.expiresAt = undefined;
     } else if (isValidTransition && nextStatus === "delivered") {
-      if (
-        !order.deliveryVerification?.otpExpiresAt ||
-        order.deliveryVerification.otpExpiresAt < new Date() ||
-        !verifyDeliveryOtp(deliveryCode, order.deliveryVerification.otpHash)
-      ) {
-        await session.abortTransaction();
-        return res.status(400).json({
-          success: false,
-          code: "INVALID_DELIVERY_CODE",
-          message: "Mã xác nhận giao hàng không đúng hoặc đã hết hạn.",
-        });
-      }
+      order.deliveredAt = new Date();
       if (!order.isSeedRewarded) {
-        order.deliveredAt = new Date();
         order.isSeedRewarded = true;
 
         if (order.paymentMethod === 'cod' && order.paymentStatus !== 'paid') {
@@ -250,9 +237,6 @@ export const updateOrderStatus = async (req, res) => {
           session,
         });
       }
-      order.deliveryVerification.verifiedAt = new Date();
-      order.deliveryVerification.recipientName = recipientName || order.deliveryAddress?.name;
-      order.deliveryVerification.otpHash = undefined;
     }
 
     if (!isValidTransition) {
@@ -282,7 +266,7 @@ export const updateOrderStatus = async (req, res) => {
     res.status(200).json({
       success: true,
       message: `Cập nhật trạng thái đơn hàng thành ${nextStatus} thành công.`,
-      data: order
+      data: serializeOrder(order)
     });
 
   } catch (error) {
